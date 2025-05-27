@@ -14,7 +14,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "accelerate>=0.33.0",
+    "huggingface-hub==0.21.0"
+    "accelerate>=0.30.0",
     "bitsandbytes==0.44.1",
     "cached_path",
     "click",
