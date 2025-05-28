@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  f5-tts-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    ports:
+      - "8000:8000"
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=info
+    volumes:
+      - ./models:/app/models
+      - ./outputs:/app/outputs
+      - /tmp/f5tts:/tmp/f5tts
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Development version with Jupyter
+  f5-tts-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "8000:8000"
+      - "8888:8888"  # Jupyter
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=debug
+    volumes:
+      - ./:/app
+      - ./models:/app/models
+      - ./outputs:/app/outputs
+      - /tmp/f5tts:/tmp/f5tts
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      bash -c "
+        python3 -m uvicorn f5_tts_api:app --host 0.0.0.0 --port 8000 --reload &
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' &
+        wait
+      "
+    profiles:
+      - dev
+
+networks:
+  default:
+    driver: bridge
