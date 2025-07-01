@@ -17,7 +17,7 @@ dependencies = [
     "huggingface-hub==0.32.0",
     "accelerate>=0.30.0",
     "bitsandbytes==0.44.1",
-    "cached_path==1.6.3",
+    "cached_path",
     "click==8.1.7",
     "datasets==3.0.1",
     "ema_pytorch>=0.5.2",
