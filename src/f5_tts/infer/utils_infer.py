@@ -278,7 +278,7 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
         ref_audio = f.name
 
     # Compute a hash of the reference audio file
-    with open(ref_audio_orig, "rb") as audio_file:
+    with open(ref_audio, "rb") as audio_file:
         audio_data = audio_file.read()
         audio_hash = hashlib.md5(audio_data).hexdigest()
 
@@ -294,7 +294,7 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
                 initialize_asr_pipeline(device=device)
             show_info("No reference text provided, transcribing reference audio...")
             ref_text = asr_pipe(
-                ref_audio_orig,
+                ref_audio,
                 chunk_length_s=30,
                 batch_size=128,
                 generate_kwargs={"task": "transcribe"},
