@@ -279,8 +279,6 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
         aseg.export(f.name, format="wav")
         ref_audio = f.name
 
-    show_info("Audio converted. Checking for reference text...")
-
     # Compute a hash of the reference audio file
     with open(ref_audio, "rb") as audio_file:
         audio_data = audio_file.read()
@@ -289,16 +287,12 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
     global _ref_audio_cache
     if audio_hash in _ref_audio_cache:
         # Use cached reference text
-        show_info("Using cached reference text...")
         ref_text = _ref_audio_cache[audio_hash]
     else:
         if not ref_text.strip():
             global asr_pipe
-            show_info("No text found. Checking ASR model...")
             if asr_pipe is None:
-                show_info("ASR model not loaded. Initializing now (this may take a while)...")
                 initialize_asr_pipeline(device=device)
-                show_info("ASR model initialized.")
             
             show_info("No reference text provided, transcribing reference audio...")
             ref_text = asr_pipe(
@@ -308,7 +302,6 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
                 generate_kwargs={"task": "transcribe"},
                 return_timestamps=False,
             )["text"].strip()
-            show_info(f"Finished transcription. Result: '{ref_text}'")
         else:
             show_info("Using custom reference text...")
         # Cache the transcribed text
@@ -321,7 +314,6 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
         else:
             ref_text += ". "
 
-    show_info("Finished processing audio")
     return ref_audio, ref_text
 
 
