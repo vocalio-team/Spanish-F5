@@ -215,7 +215,7 @@ def parse_speechtypes_text(gen_text):
 
     return segments
 
-"""
+
 with gr.Blocks() as app_multistyle:
     # New section for multistyle generation
     gr.Markdown(
@@ -428,10 +428,10 @@ with gr.Blocks() as app_multistyle:
         # Concatenate all audio segments
         if generated_audio_segments:
             final_audio_data = np.concatenate(generated_audio_segments)
-            return [(sr, final_audio_data)]
+            return (sr, final_audio_data)
         else:
             gr.Warning("No se generó ningún audio.")
-            return [None]
+            return None
 
     generate_multistyle_btn.click(
         generate_multistyle_speech,
@@ -447,7 +447,7 @@ with gr.Blocks() as app_multistyle:
             model_choice_multistyle,
             remove_silence_multistyle,
         ],
-        outputs=[audio_output_multistyle],
+        outputs=audio_output_multistyle,
     )
 
     # Validation function to disable Generate button if speech types are missing
@@ -482,7 +482,7 @@ with gr.Blocks() as app_multistyle:
         inputs=[gen_text_input_multistyle, regular_name] + speech_type_names,
         outputs=generate_multistyle_btn,
     )
-"""
+
 
 with gr.Blocks() as app_chat:
     gr.Markdown(
@@ -716,7 +716,7 @@ Para los mejores resultados, intenta convertir tu audio de referencia a WAV o MP
     )
     gr.TabbedInterface(
         [app_tts, app_multistyle, app_chat, app_credits],
-        ["TTS", "Chat de Voz", "Créditos"],
+        ["TTS", "Multi-Habla", "Chat de Voz", "Créditos"],
     )
 
 
