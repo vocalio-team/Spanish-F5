@@ -716,7 +716,7 @@ Para los mejores resultados, intenta convertir tu audio de referencia a WAV o MP
     )
     gr.TabbedInterface(
         [app_tts, app_multistyle, app_chat, app_credits],
-        ["TTS", "Multi-Habla", "Chat de Voz", "Créditos"],
+        ["TTS", "Chat de Voz", "Créditos"],
     )
 
 
