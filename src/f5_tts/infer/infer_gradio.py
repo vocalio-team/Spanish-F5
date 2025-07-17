@@ -428,10 +428,10 @@ with gr.Blocks() as app_multistyle:
         # Concatenate all audio segments
         if generated_audio_segments:
             final_audio_data = np.concatenate(generated_audio_segments)
-            return (sr, final_audio_data)
+            return [(sr, final_audio_data)]
         else:
             gr.Warning("No se generó ningún audio.")
-            return None
+            return [None]
 
     generate_multistyle_btn.click(
         generate_multistyle_speech,
@@ -447,7 +447,7 @@ with gr.Blocks() as app_multistyle:
             model_choice_multistyle,
             remove_silence_multistyle,
         ],
-        outputs=audio_output_multistyle,
+        outputs=[audio_output_multistyle],
     )
 
     # Validation function to disable Generate button if speech types are missing
