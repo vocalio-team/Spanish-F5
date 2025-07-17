@@ -20,7 +20,7 @@ dependencies = [
     "click",
     "datasets",
     "ema_pytorch>=0.5.2",
-    "gradio>=3.45.2",
+    "gradio",
     "huggingface-hub==0.32.0",
     "jieba",
     "librosa",
