@@ -46,7 +46,7 @@ dependencies = [
 
 [project.optional-dependencies]
 eval = [
-    "faster_whisper==0.10.1",
+    "faster_whisper",
     "jiwer==4.0.0",
     "funasr",
     "modelscope",
