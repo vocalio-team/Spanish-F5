@@ -215,7 +215,7 @@ def parse_speechtypes_text(gen_text):
 
     return segments
 
-
+"""
 with gr.Blocks() as app_multistyle:
     # New section for multistyle generation
     gr.Markdown(
@@ -482,7 +482,7 @@ with gr.Blocks() as app_multistyle:
         inputs=[gen_text_input_multistyle, regular_name] + speech_type_names,
         outputs=generate_multistyle_btn,
     )
-
+"""
 
 with gr.Blocks() as app_chat:
     gr.Markdown(
