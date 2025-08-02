@@ -237,6 +237,8 @@ def remove_silence_edges(audio, silence_threshold=-42):
 # preprocess reference audio and text
 
 
+# In utils_infer.py
+
 def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_info=print, device=device):
     show_info("Converting audio...")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
@@ -285,13 +287,13 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
     global _ref_audio_cache
     if audio_hash in _ref_audio_cache:
         # Use cached reference text
-        show_info("Using cached reference text...")
         ref_text = _ref_audio_cache[audio_hash]
     else:
         if not ref_text.strip():
             global asr_pipe
             if asr_pipe is None:
                 initialize_asr_pipeline(device=device)
+            
             show_info("No reference text provided, transcribing reference audio...")
             ref_text = asr_pipe(
                 ref_audio,
@@ -300,7 +302,6 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
                 generate_kwargs={"task": "transcribe"},
                 return_timestamps=False,
             )["text"].strip()
-            show_info("Finished transcription")
         else:
             show_info("Using custom reference text...")
         # Cache the transcribed text
