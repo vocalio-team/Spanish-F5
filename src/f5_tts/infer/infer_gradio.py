@@ -36,6 +36,7 @@ from f5_tts.infer.utils_infer import (
     infer_process,
     remove_silence_for_generated_wav,
     save_spectrogram,
+    initialize_asr_pipeline,
 )
 
 vocoder = load_vocoder()
@@ -46,6 +47,10 @@ F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, co
 F5TTS_ema_model = load_model(
     DiT, F5TTS_model_cfg, str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
 )
+
+print("Pre-loading ASR model (Whisper). This will run only once at startup.")
+initialize_asr_pipeline()
+print("ASR model pre-loaded successfully.")
 
 chat_model_state = None
 chat_tokenizer_state = None
