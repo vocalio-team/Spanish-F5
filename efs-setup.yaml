@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Minimal EFS setup for F5-TTS model upload
+
+Parameters:
+  VpcId:
+    Type: String
+    Default: vpc-d29f88b7
+    Description: VPC ID where resources will be created
+  
+  PrimarySubnetId:
+    Type: String
+    Default: subnet-cbc5a6e0
+    Description: Primary subnet ID (us-east-1b) for instances
+  
+  SecondarySubnetId:
+    Type: String
+    Default: subnet-1f507768
+    Description: Secondary subnet ID (us-east-1c) for instances
+  
+  KeyName:
+    Type: String
+    Default: f5-tts-debug-key
+    Description: EC2 Key Pair for SSH access
+
+Resources:
+
+  # EFS File System for storing F5-TTS models
+  ModelsEFS:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: F5-TTS-Models-Standalone
+      PerformanceMode: generalPurpose
+      Encrypted: true
+
+  # EFS Mount Targets
+  EFSMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref ModelsEFS
+      SubnetId: !Ref PrimarySubnetId
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EFSMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref ModelsEFS
+      SubnetId: !Ref SecondarySubnetId
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  # Security Group for EFS
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: F5-TTS-EFS-SG-Upload
+      GroupDescription: Security group for F5-TTS EFS upload
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref UploadSecurityGroup
+          Description: Allow NFS access from upload instance
+
+  # Simple EC2 instance for uploading models
+  UploadInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: ami-0c02fb55956c7d316  # Amazon Linux 2023
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PrimarySubnetId
+      SecurityGroupIds:
+        - !Ref UploadSecurityGroup
+      IamInstanceProfile: !Ref UploadInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y nfs-utils
+          
+          # Create mount point and mount EFS
+          mkdir -p /mnt/efs
+          mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 \
+            ${ModelsEFS}.efs.us-east-1.amazonaws.com:/ /mnt/efs
+          
+          # Add to fstab for persistence
+          echo "${ModelsEFS}.efs.us-east-1.amazonaws.com:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 0 0" >> /etc/fstab
+          
+          # Create models directory structure
+          mkdir -p /mnt/efs/models/F5TTS_Base
+          mkdir -p /mnt/efs/models/E2TTS_Base
+          chmod -R 755 /mnt/efs/models
+          
+          echo "EFS mounted and ready for model upload at /mnt/efs/models"
+
+  # Security Group for Upload Instance
+  UploadSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: F5-TTS-Upload-SG
+      GroupDescription: Security group for F5-TTS model upload instance
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: Allow SSH access
+
+  # IAM Instance Profile for Upload Instance
+  UploadInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: F5-TTS-Upload-Profile
+      Roles:
+        - !Ref UploadRole
+
+  UploadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: F5-TTS-Upload-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+Outputs:
+  EFSFileSystemId:
+    Description: EFS File System ID for F5-TTS models
+    Value: !Ref ModelsEFS
+    Export:
+      Name: !Sub "${AWS::StackName}-EFS-ID"
+  
+  UploadInstanceId:
+    Description: EC2 Instance ID for uploading models
+    Value: !Ref UploadInstance
+    Export:
+      Name: !Sub "${AWS::StackName}-Upload-Instance"
+  
+  UploadInstancePublicIP:
+    Description: Public IP of upload instance
+    Value: !GetAtt UploadInstance.PublicIp
+    Export:
+      Name: !Sub "${AWS::StackName}-Upload-IP"

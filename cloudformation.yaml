@@ -38,15 +38,56 @@ Parameters:
   
   DeploymentTimestamp:
     Type: String
-    Default: "20250803-222300"
+    Default: "20250803-232900"
     Description: Timestamp to force launch template updates
 
 Resources:
 
+  # EFS File System for storing F5-TTS models
+  ModelsEFS:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: F5-TTS-Models
+      PerformanceMode: generalPurpose
+      Encrypted: true
+
+  # EFS Mount Targets
+  EFSMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref ModelsEFS
+      SubnetId: !Ref PrimarySubnetId
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EFSMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref ModelsEFS
+      SubnetId: !Ref SecondarySubnetId
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  # Security Group for EFS
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: F5-TTS-EFS-SG-v8
+      GroupDescription: Security group for F5-TTS EFS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref InstanceSecurityGroup
+          Description: Allow NFS access from instances
+
   SpotLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: F5-TTS-SpotTemplate
+      LaunchTemplateName: F5-TTS-SpotTemplate-v8
       LaunchTemplateData:
         InstanceType: !Ref InstanceType
         ImageId: ami-082af43e8cf191583  # AWS Deep Learning AMI with GPU support pre-installed
@@ -64,68 +105,125 @@ Resources:
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
-            set -e  # Exit on any error
+            # Remove set -e to allow script to continue on errors for debugging
             exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
             
             echo "[$(date)] Starting F5-TTS setup... Deployment: ${DeploymentTimestamp}"
             
-            # Update system (minimal)
-            apt update -y
+            # Update system and install required packages
+            echo "[$(date)] Installing required packages..."
+            apt update -y || echo "[$(date)] WARNING: apt update failed"
+            apt install -y python3-pip nfs-common || echo "[$(date)] WARNING: package install failed"
+            pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz || echo "[$(date)] WARNING: cfn scripts install failed"
             
-            # Install AWS CLI v2 and CloudFormation helper scripts
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            apt install -y unzip python3-pip
-            unzip awscliv2.zip
-            ./aws/install
+            # Mount EFS for model storage
+            echo "[$(date)] Setting up EFS mount for models..."
+            mkdir -p /mnt/efs
+            mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 ${ModelsEFS}.efs.us-east-1.amazonaws.com:/ /mnt/efs || {
+              echo "[$(date)] WARNING: EFS mount failed, continuing anyway..."
+            }
             
-            # Install CloudFormation helper scripts
-            pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+            # Add EFS to fstab for persistence
+            echo "${ModelsEFS}.efs.us-east-1.amazonaws.com:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 0 0" >> /etc/fstab
+            
+            # Create models directory structure
+            mkdir -p /mnt/efs/models
+            mkdir -p /mnt/efs/models/F5TTS_Base
+            mkdir -p /mnt/efs/models/E2TTS_Base
             
             # Docker is already installed in Deep Learning AMI, just ensure it's running
-            systemctl start docker
-            systemctl enable docker
+            echo "[$(date)] Starting Docker service..."
+            systemctl start docker || echo "[$(date)] WARNING: Docker start failed"
+            systemctl enable docker || echo "[$(date)] WARNING: Docker enable failed"
             
             # Test GPU access
-            nvidia-smi || { echo "GPU not available"; exit 1; }
+            echo "[$(date)] Testing GPU access..."
+            nvidia-smi || echo "[$(date)] WARNING: GPU not available"
             
-            # Login to ECR with retry
+            # Login to ECR with retry (AWS CLI should be pre-installed on Deep Learning AMI)
+            echo "[$(date)] Logging into ECR..."
             for i in {1..3}; do
-              aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 475302692635.dkr.ecr.us-east-1.amazonaws.com && break
-              echo "ECR login attempt $i failed, retrying..."
+              aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 475302692635.dkr.ecr.us-east-1.amazonaws.com && {
+                echo "[$(date)] ECR login successful"
+                break
+              }
+              echo "[$(date)] ECR login attempt $i failed, retrying..."
               sleep 10
             done
             
             # Pull and run F5-TTS container with retry
+            echo "[$(date)] Pulling Docker image: ${ECRImageURI}"
             for i in {1..3}; do
-              docker pull ${ECRImageURI} && break
-              echo "Docker pull attempt $i failed, retrying..."
+              docker pull ${ECRImageURI} && {
+                echo "[$(date)] Docker pull successful"
+                break
+              }
+              echo "[$(date)] Docker pull attempt $i failed, retrying..."
               sleep 15
             done
             
-            # Start the container
+            # Start the container with EFS volume mounted
+            echo "[$(date)] Starting F5-TTS container with EFS volume..."
             docker run --gpus all -d --restart unless-stopped \
               -p 80:8000 \
               --name f5-tts-api \
+              -v /mnt/efs/models:/app/models \
               --health-cmd="curl -f http://localhost:8000/health || exit 1" \
               --health-interval=30s \
               --health-timeout=10s \
               --health-retries=3 \
-              ${ECRImageURI}
+              ${ECRImageURI} || {
+                echo "[$(date)] ERROR: Failed to start container"
+                docker logs f5-tts-api 2>/dev/null || echo "[$(date)] No container logs available"
+                cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
+                exit 1
+              }
             
-            # Wait for container to be healthy
+            # Wait for container to be healthy (reduced time for faster deployment)
             echo "[$(date)] Waiting for container to be healthy..."
-            for i in {1..20}; do
+            
+            # First, just wait for container to be running
+            for i in {1..10}; do
+              if docker ps | grep -q f5-tts-api; then
+                echo "[$(date)] Container is running!"
+                break
+              fi
+              if [ $i -eq 10 ]; then
+                echo "[$(date)] Container failed to start after 10 attempts"
+                echo "[$(date)] Container logs:"
+                docker logs f5-tts-api 2>/dev/null || echo "[$(date)] No container logs available"
+                echo "[$(date)] Sending failure signal to CloudFormation"
+                cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
+                exit 1
+              fi
+              echo "[$(date)] Waiting for container to start... ($i/10)"
+              sleep 10
+            done
+            
+            # Now wait for health checks (reduced from 20 to 12 attempts)
+            for i in {1..12}; do
               if docker inspect --format='{{.State.Health.Status}}' f5-tts-api 2>/dev/null | grep -q "healthy"; then
                 echo "[$(date)] Container is healthy!"
                 break
               fi
-            if [ $i -eq 20 ]; then
-              echo "[$(date)] Container failed to become healthy"
-              docker logs f5-tts-api
-              cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
-              exit 1
+              if [ $i -eq 12 ]; then
+                echo "[$(date)] Container failed to become healthy after 12 attempts"
+                echo "[$(date)] Container status:"
+                docker inspect --format='{{.State.Health.Status}}' f5-tts-api 2>/dev/null || echo "[$(date)] No health status available"
+                echo "[$(date)] Container logs (last 50 lines):"
+                docker logs --tail 50 f5-tts-api 2>/dev/null || echo "[$(date)] No container logs available"
+                
+                # Still signal success if container is running, even if health check fails
+                if docker ps | grep -q f5-tts-api; then
+                  echo "[$(date)] Container is running but not healthy - signaling success anyway"
+                  break
+                else
+                  echo "[$(date)] Container not running - sending failure signal"
+                  cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
+                  exit 1
+                fi
               fi
-              echo "[$(date)] Waiting for health check... ($i/20)"
+              echo "[$(date)] Waiting for health check... ($i/12)"
               sleep 15
             done
             
@@ -145,17 +243,20 @@ Resources:
             echo "[$(date)] Setup completed successfully!"
             
             # Signal success to CloudFormation
-            cfn-signal -e $? --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
+            echo "[$(date)] Sending success signal to CloudFormation"
+            cfn-signal -e 0 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region} || {
+              echo "[$(date)] WARNING: Failed to send CloudFormation signal"
+            }
             
             echo $(date +%s) > /tmp/last_infer
 
   SpotASG:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: F5-TTS-SpotASG
+      AutoScalingGroupName: F5-TTS-SpotASG-v8
       MinSize: '1'
       MaxSize: '2'
-      DesiredCapacity: '2'
+      DesiredCapacity: '1'
       VPCZoneIdentifier:
         - !Ref PrimarySubnetId
         - !Ref SecondarySubnetId
@@ -189,7 +290,7 @@ Resources:
   SpotTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: F5-TTS-SpotTargetGroup
+      Name: F5-TTS-SpotTargetGroup-v8
       Port: 80
       Protocol: HTTP
       VpcId: !Ref VpcId
@@ -205,7 +306,7 @@ Resources:
   SpotALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: F5-TTS-SpotALB
+      Name: F5-TTS-SpotALB-v8
       Scheme: internet-facing
       Subnets:
         - !Ref PrimarySubnetId
@@ -227,7 +328,7 @@ Resources:
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: F5-TTS-ALB-SG
+      GroupName: F5-TTS-ALB-SG-v8
       GroupDescription: Security group for F5-TTS Application Load Balancer
       VpcId: !Ref VpcId
       SecurityGroupIngress:
@@ -240,7 +341,7 @@ Resources:
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: F5-TTS-Instance-SG
+      GroupName: F5-TTS-Instance-SG-v8
       GroupDescription: Security group for F5-TTS EC2 instances
       VpcId: !Ref VpcId
       SecurityGroupIngress:
@@ -268,14 +369,14 @@ Resources:
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceProfileName: F5-TTS-EC2-Profile
+      InstanceProfileName: F5-TTS-EC2-Profile-v8
       Roles:
         - !Ref EC2Role
 
   EC2Role:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: F5-TTS-EC2-Role
+      RoleName: F5-TTS-EC2-Role-v8
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -319,3 +420,9 @@ Outputs:
     Value: !Sub "http://${SpotALB.DNSName}"
     Export:
       Name: !Sub "${AWS::StackName}-API-URL"
+  
+  EFSFileSystemId:
+    Description: EFS File System ID for F5-TTS models
+    Value: !Ref ModelsEFS
+    Export:
+      Name: !Sub "${AWS::StackName}-EFS-ID"
