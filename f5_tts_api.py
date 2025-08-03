@@ -15,13 +15,13 @@ import json
 import sys
 sys.path.append('src')
 
-from f5_tts.infer.infer_cli import load_model, infer_process, parse_toml_file
+# Use the F5TTS API class to avoid argparse conflicts
+from f5_tts.api import F5TTS
 from f5_tts.model import DiT, UNetT
 from f5_tts.infer.utils_infer import (
     load_vocoder,
-    load_model as load_model_utils,
     preprocess_ref_audio_text,
-    infer_process as infer_process_utils,
+    infer_process,
     chunk_text,
     save_spectrogram
 )
@@ -39,6 +39,7 @@ app = FastAPI(
 # Global model storage
 models_cache = {}
 vocoder_cache = {}
+model_loading_status = {"loading": False, "loaded": False, "error": None}
 
 # Request/Response Models
 class TTSRequest(BaseModel):
@@ -87,6 +88,7 @@ audio_files = {}
 async def startup_event():
     """Load default models on startup"""
     try:
+        model_loading_status["loading"] = True
         logger.info("Loading default F5-TTS model...")
         model, vocoder, tokenizer, mel_spec_type = load_model_utils(
             model_type="F5-TTS",
@@ -104,8 +106,12 @@ async def startup_event():
             "tokenizer": tokenizer,
             "mel_spec_type": mel_spec_type
         }
+        model_loading_status["loading"] = False
+        model_loading_status["loaded"] = True
         logger.info("Default model loaded successfully")
     except Exception as e:
+        model_loading_status["loading"] = False
+        model_loading_status["error"] = str(e)
         logger.error(f"Failed to load default model: {e}")
 
 @app.get("/")

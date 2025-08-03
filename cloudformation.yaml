@@ -1,0 +1,321 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation for Always-On Spot GPU Instance with F5-TTS
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: g4dn.xlarge
+    AllowedValues:
+      - g4dn.xlarge
+      - g5.xlarge
+      - g4dn.2xlarge
+    Description: EC2 Spot GPU Instance Type
+  
+  VpcId:
+    Type: String
+    Default: vpc-d29f88b7
+    Description: VPC ID where resources will be created
+  
+  PrimarySubnetId:
+    Type: String
+    Default: subnet-cbc5a6e0
+    Description: Primary subnet ID (us-east-1b) for instances
+  
+  SecondarySubnetId:
+    Type: String
+    Default: subnet-1f507768
+    Description: Secondary subnet ID (us-east-1c) for instances
+  
+  ECRImageURI:
+    Type: String
+    Default: 475302692635.dkr.ecr.us-east-1.amazonaws.com/f5-tts-api:amd64
+    Description: ECR URI for the F5-TTS Docker image
+  
+  KeyName:
+    Type: String
+    Default: f5-tts-debug-key
+    Description: EC2 Key Pair for SSH access
+  
+  DeploymentTimestamp:
+    Type: String
+    Default: "20250803-143045"
+    Description: Timestamp to force launch template updates
+
+Resources:
+
+  SpotLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: F5-TTS-SpotTemplate
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: ami-082af43e8cf191583  # AWS Deep Learning AMI with GPU support pre-installed
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 50
+              VolumeType: gp3
+              DeleteOnTermination: true
+        SecurityGroupIds:
+          - !Ref InstanceSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref EC2InstanceProfile
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e  # Exit on any error
+            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+            
+            echo "[$(date)] Starting F5-TTS setup... Deployment: ${DeploymentTimestamp}"
+            
+            # Update system (minimal)
+            apt update -y
+            
+            # Install AWS CLI v2 and CloudFormation helper scripts
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            apt install -y unzip python3-pip
+            unzip awscliv2.zip
+            ./aws/install
+            
+            # Install CloudFormation helper scripts
+            pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+            
+            # Docker is already installed in Deep Learning AMI, just ensure it's running
+            systemctl start docker
+            systemctl enable docker
+            
+            # Test GPU access
+            nvidia-smi || { echo "GPU not available"; exit 1; }
+            
+            # Login to ECR with retry
+            for i in {1..3}; do
+              aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 475302692635.dkr.ecr.us-east-1.amazonaws.com && break
+              echo "ECR login attempt $i failed, retrying..."
+              sleep 10
+            done
+            
+            # Pull and run F5-TTS container with retry
+            for i in {1..3}; do
+              docker pull ${ECRImageURI} && break
+              echo "Docker pull attempt $i failed, retrying..."
+              sleep 15
+            done
+            
+            # Start the container
+            docker run --gpus all -d --restart unless-stopped \
+              -p 80:8000 \
+              --name f5-tts-api \
+              --health-cmd="curl -f http://localhost:8000/health || exit 1" \
+              --health-interval=30s \
+              --health-timeout=10s \
+              --health-retries=3 \
+              ${ECRImageURI}
+            
+            # Wait for container to be healthy
+            echo "[$(date)] Waiting for container to be healthy..."
+            for i in {1..20}; do
+              if docker inspect --format='{{.State.Health.Status}}' f5-tts-api 2>/dev/null | grep -q "healthy"; then
+                echo "[$(date)] Container is healthy!"
+                break
+              fi
+            if [ $i -eq 20 ]; then
+              echo "[$(date)] Container failed to become healthy"
+              docker logs f5-tts-api
+              cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
+              exit 1
+              fi
+              echo "[$(date)] Waiting for health check... ($i/20)"
+              sleep 15
+            done
+            
+            # Simple health monitoring script
+            cat > /opt/health_monitor.sh << 'EOF'
+            #!/bin/bash
+            if ! docker ps | grep -q f5-tts-api; then
+              echo "[$(date)] Container not running, restarting..."
+              docker start f5-tts-api || docker run --gpus all -d --restart unless-stopped -p 80:8000 --name f5-tts-api ${ECRImageURI}
+            fi
+            EOF
+            chmod +x /opt/health_monitor.sh
+            
+            # Set up monitoring cron job
+            echo "*/5 * * * * root /opt/health_monitor.sh >> /var/log/health-monitor.log 2>&1" >> /etc/crontab
+            
+            echo "[$(date)] Setup completed successfully!"
+            
+            # Signal success to CloudFormation
+            cfn-signal -e $? --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
+            
+            echo $(date +%s) > /tmp/last_infer
+
+  SpotASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: F5-TTS-SpotASG
+      MinSize: '1'
+      MaxSize: '2'
+      DesiredCapacity: '2'
+      VPCZoneIdentifier:
+        - !Ref PrimarySubnetId
+        - !Ref SecondarySubnetId
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref SpotLaunchTemplate
+            Version: !GetAtt SpotLaunchTemplate.LatestVersionNumber
+          Overrides:
+            - InstanceType: !Ref InstanceType
+            - InstanceType: g4dn.2xlarge
+            - InstanceType: g5.xlarge
+        InstancesDistribution:
+          SpotAllocationStrategy: price-capacity-optimized
+          SpotMaxPrice: "0.50"
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      TargetGroupARNs:
+        - !Ref SpotTargetGroup
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 0
+        MaxBatchSize: 1
+        PauseTime: PT15M
+        WaitOnResourceSignals: true
+
+  SpotTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: F5-TTS-SpotTargetGroup
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+      Matcher:
+        HttpCode: 200
+      TargetType: instance
+
+  SpotALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: F5-TTS-SpotALB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PrimarySubnetId
+        - !Ref SecondarySubnetId
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Type: application
+
+  SpotListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref SpotALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref SpotTargetGroup
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: F5-TTS-ALB-SG
+      GroupDescription: Security group for F5-TTS Application Load Balancer
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP traffic from internet
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: F5-TTS-Instance-SG
+      GroupDescription: Security group for F5-TTS EC2 instances
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Allow HTTP traffic from ALB
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: Allow SSH access (optional - remove if not needed)
+
+  ALBEgressRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ALBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      DestinationSecurityGroupId: !Ref InstanceSecurityGroup
+      Description: Forward traffic to instances
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: F5-TTS-EC2-Profile
+      Roles:
+        - !Ref EC2Role
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: F5-TTS-EC2-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+        - PolicyName: CloudFormationSignal
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:SignalResource
+                Resource: '*'
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS name of the load balancer
+    Value: !GetAtt SpotALB.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-LoadBalancer-DNS"
+  
+  LoadBalancerURL:
+    Description: URL of the F5-TTS API
+    Value: !Sub "http://${SpotALB.DNSName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-API-URL"
