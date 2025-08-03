@@ -1,0 +1,4 @@
+dim: 1024
+depth: 24
+heads: 16
+ff_mult: 4

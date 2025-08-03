@@ -28,7 +28,7 @@ Parameters:
   
   ECRImageURI:
     Type: String
-    Default: 475302692635.dkr.ecr.us-east-1.amazonaws.com/f5-tts-api:amd64
+    Default: 475302692635.dkr.ecr.us-east-1.amazonaws.com/f5-tts-api:latest
     Description: ECR URI for the F5-TTS Docker image
   
   KeyName:
@@ -38,7 +38,7 @@ Parameters:
   
   DeploymentTimestamp:
     Type: String
-    Default: "20250803-143045"
+    Default: "20250803-222300"
     Description: Timestamp to force launch template updates
 
 Resources:

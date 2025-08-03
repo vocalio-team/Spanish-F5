@@ -22,8 +22,11 @@ from f5_tts.infer.utils_infer import (
     load_vocoder,
     preprocess_ref_audio_text,
     infer_process,
-    chunk_text,
-    save_spectrogram
+    save_spectrogram,
+    load_model,
+    remove_silence_for_generated_wav,
+    target_sample_rate,
+    hop_length
 )
 
 # Configure logging
@@ -90,29 +93,52 @@ async def startup_event():
     try:
         model_loading_status["loading"] = True
         logger.info("Loading default F5-TTS model...")
-        model, vocoder, tokenizer, mel_spec_type = load_model_utils(
+        # Detect the best available device
+        import torch
+        if torch.cuda.is_available():
+            device = "cuda"
+            logger.info("CUDA is available, using GPU")
+        else:
+            device = "cpu"
+            logger.info("CUDA not available, using CPU")
+        
+        # Use the F5TTS class with explicit local model paths
+        # Don't use local_path for vocoder, let it download from HF
+        f5tts = F5TTS(
             model_type="F5-TTS",
-            ckpt_file="",
+            ckpt_file="/app/models/F5TTS_Base/model_1200000.safetensors",
             vocab_file="",
             ode_method="euler",
             use_ema=True,
             vocoder_name="vocos",
-            local_path="",
-            device="auto"
+            local_path=None,  # Let vocoder download from HF
+            device=device
         )
-        models_cache["F5-TTS"] = {
-            "model": model,
-            "vocoder": vocoder,
-            "tokenizer": tokenizer,
-            "mel_spec_type": mel_spec_type
-        }
+        models_cache["F5-TTS"] = f5tts
+        
+        # Also load E2-TTS model
+        logger.info("Loading E2-TTS model...")
+        e2tts = F5TTS(
+            model_type="E2-TTS",
+            ckpt_file="/app/models/E2TTS_Base/model_1200000.safetensors",
+            vocab_file="",
+            ode_method="euler",
+            use_ema=True,
+            vocoder_name="vocos",
+            local_path=None,  # Let vocoder download from HF
+            device=device
+        )
+        models_cache["E2-TTS"] = e2tts
+        
         model_loading_status["loading"] = False
         model_loading_status["loaded"] = True
-        logger.info("Default model loaded successfully")
+        logger.info("All models loaded successfully")
     except Exception as e:
         model_loading_status["loading"] = False
         model_loading_status["error"] = str(e)
         logger.error(f"Failed to load default model: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 @app.get("/")
 async def root():
@@ -148,22 +174,149 @@ async def list_models():
         "vocoders": ["vocos", "bigvgan"]
     }
 
-@app.post("/tts", response_model=TTSResponse)
+@app.post("/tts")
 async def text_to_speech(
+    request: TTSRequest
+):
+    """
+    Generate speech from text using default reference audio - Real-time response
+    """
+    try:
+        # Use default reference audio
+        ref_audio_path = "ref_audio/default.wav"
+        logger.info("Real-time TTS generation with default ref_audio")
+        
+        # Get model from cache
+        if request.model not in models_cache:
+            raise HTTPException(status_code=400, detail=f"Model {request.model} not loaded")
+        
+        f5tts_instance = models_cache[request.model]
+        
+        # Generate unique filename for output
+        output_filename = f"tts_{uuid.uuid4().hex}.wav"
+        output_path = f"/tmp/{output_filename}"
+        
+        # Process TTS synchronously
+        def run_inference():
+            wav, sr, spect = f5tts_instance.infer(
+                ref_file=ref_audio_path,
+                ref_text=request.ref_text,
+                gen_text=request.gen_text,
+                target_rms=0.1,
+                cross_fade_duration=request.cross_fade_duration,
+                nfe_step=request.nfe_step,
+                cfg_strength=request.cfg_strength,
+                sway_sampling_coef=request.sway_sampling_coef,
+                speed=request.speed,
+                seed=request.seed,
+                remove_silence=request.remove_silence,
+                file_wave=output_path
+            )
+            return wav, sr, spect
+        
+        # Run inference in executor to avoid blocking
+        await asyncio.get_event_loop().run_in_executor(None, run_inference)
+        
+        # Return the audio file directly
+        return FileResponse(
+            output_path,
+            media_type="audio/wav",
+            filename=output_filename,
+            headers={"Content-Disposition": f"attachment; filename={output_filename}"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in real-time TTS: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+
+@app.post("/tts/stream")
+async def text_to_speech_stream(
+    request: TTSRequest
+):
+    """
+    Generate speech from text and return audio as streaming response - Real-time
+    """
+    try:
+        # Use default reference audio
+        ref_audio_path = "ref_audio/default.wav"
+        logger.info("Real-time streaming TTS generation with default ref_audio")
+        
+        # Get model from cache
+        if request.model not in models_cache:
+            raise HTTPException(status_code=400, detail=f"Model {request.model} not loaded")
+        
+        f5tts_instance = models_cache[request.model]
+        
+        # Generate unique filename for output
+        output_filename = f"tts_{uuid.uuid4().hex}.wav"
+        output_path = f"/tmp/{output_filename}"
+        
+        # Process TTS synchronously
+        def run_inference():
+            wav, sr, spect = f5tts_instance.infer(
+                ref_file=ref_audio_path,
+                ref_text=request.ref_text,
+                gen_text=request.gen_text,
+                target_rms=0.1,
+                cross_fade_duration=request.cross_fade_duration,
+                nfe_step=request.nfe_step,
+                cfg_strength=request.cfg_strength,
+                sway_sampling_coef=request.sway_sampling_coef,
+                speed=request.speed,
+                seed=request.seed,
+                remove_silence=request.remove_silence,
+                file_wave=output_path
+            )
+            return wav, sr, spect
+        
+        # Run inference in executor to avoid blocking
+        await asyncio.get_event_loop().run_in_executor(None, run_inference)
+        
+        # Stream the audio file
+        def iterfile():
+            with open(output_path, mode="rb") as file_like:
+                yield from file_like
+            # Clean up file after streaming
+            try:
+                os.unlink(output_path)
+            except:
+                pass
+        
+        return StreamingResponse(
+            iterfile(),
+            media_type="audio/wav",
+            headers={"Content-Disposition": f"inline; filename={output_filename}"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in streaming TTS: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+
+@app.post("/tts/upload", response_model=TTSResponse)
+async def text_to_speech_with_upload(
     request: TTSRequest,
-    ref_audio: UploadFile = File(..., description="Reference audio file"),
+    ref_audio: Optional[UploadFile] = File(None, description="Reference audio file (optional)"),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Generate speech from text using reference audio
+    Generate speech from text using uploaded or default reference audio
     """
     task_id = str(uuid.uuid4())
     
-    # Save uploaded reference audio
-    ref_audio_path = f"/tmp/ref_audio_{task_id}.wav"
-    with open(ref_audio_path, "wb") as f:
-        content = await ref_audio.read()
-        f.write(content)
+    # Save uploaded reference audio or use default
+    if ref_audio is not None:
+        ref_audio_path = f"/tmp/ref_audio_{task_id}.wav"
+        with open(ref_audio_path, "wb") as f:
+            content = await ref_audio.read()
+            f.write(content)
+        logger.info("Using uploaded ref_audio for TTS generation")
+    else:
+        ref_audio_path = "ref_audio/default.wav"  # Use default ref audio
+        logger.info("No ref_audio provided, using default ref_audio")
     
     # Initialize task
     tasks[task_id] = TaskStatus(
@@ -353,28 +506,15 @@ async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path:
     try:
         # Update task status
         tasks[task_id].status = "processing"
-        tasks[task_id].message = "Loading model..."
+        tasks[task_id].message = "Getting model..."
         
-        # Load model if not cached
+        # Get model from cache
         if request.model not in models_cache:
-            model, vocoder, tokenizer, mel_spec_type = load_model_utils(
-                model_type=request.model,
-                ckpt_file="",
-                vocab_file="",
-                ode_method="euler",
-                use_ema=True,
-                vocoder_name=request.vocoder_name,
-                local_path="",
-                device="auto"
-            )
-            models_cache[request.model] = {
-                "model": model,
-                "vocoder": vocoder,
-                "tokenizer": tokenizer,
-                "mel_spec_type": mel_spec_type
-            }
+            tasks[task_id].status = "failed"
+            tasks[task_id].message = f"Model {request.model} not loaded"
+            return
         
-        model_data = models_cache[request.model]
+        f5tts_instance = models_cache[request.model]
         
         # Update task status
         tasks[task_id].message = "Processing audio..."
@@ -382,26 +522,26 @@ async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path:
         # Generate output path
         output_path = f"/tmp/output_{task_id}.wav"
         
-        # Process TTS
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            infer_process_utils,
-            ref_audio_path,
-            request.ref_text,
-            request.gen_text,
-            model_data["model"],
-            model_data["vocoder"],
-            model_data["tokenizer"],
-            model_data["mel_spec_type"],
-            request.speed,
-            request.nfe_step,
-            request.cfg_strength,
-            request.sway_sampling_coef,
-            request.seed,
-            request.remove_silence,
-            request.cross_fade_duration,
-            output_path
-        )
+        # Process TTS using F5TTS instance
+        def run_inference():
+            wav, sr, spect = f5tts_instance.infer(
+                ref_file=ref_audio_path,
+                ref_text=request.ref_text,
+                gen_text=request.gen_text,
+                target_rms=0.1,
+                cross_fade_duration=request.cross_fade_duration,
+                nfe_step=request.nfe_step,
+                cfg_strength=request.cfg_strength,
+                sway_sampling_coef=request.sway_sampling_coef,
+                speed=request.speed,
+                seed=request.seed,
+                remove_silence=request.remove_silence,
+                file_wave=output_path
+            )
+            return wav, sr, spect
+        
+        # Run inference in executor
+        await asyncio.get_event_loop().run_in_executor(None, run_inference)
         
         # Store audio file reference
         audio_files[task_id] = output_path
@@ -417,6 +557,8 @@ async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path:
         
     except Exception as e:
         logger.error(f"Error processing TTS request {task_id}: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         tasks[task_id].status = "failed"
         tasks[task_id].message = f"TTS generation failed: {str(e)}"
         tasks[task_id].completed_at = datetime.now().isoformat()
