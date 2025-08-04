@@ -179,52 +179,32 @@ Resources:
                 exit 1
               }
             
-            # Wait for container to be healthy (reduced time for faster deployment)
-            echo "[$(date)] Waiting for container to be healthy..."
+            # Wait for container to start and be accessible
+            echo "[$(date)] Waiting for container to be accessible..."
+            sleep 30  # Give container time to start
             
-            # First, just wait for container to be running
-            for i in {1..10}; do
-              if docker ps | grep -q f5-tts-api; then
-                echo "[$(date)] Container is running!"
+            # Check if container is running
+            if ! docker ps | grep -q f5-tts-api; then
+              echo "[$(date)] Container is not running"
+              docker logs f5-tts-api
+              cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
+              exit 1
+            fi
+            
+            # Test basic HTTP connectivity (without health check dependency)
+            for i in {1..30}; do
+              if curl -f http://localhost:8000/ >/dev/null 2>&1; then
+                echo "[$(date)] Container is responding to HTTP requests!"
                 break
               fi
-              if [ $i -eq 10 ]; then
-                echo "[$(date)] Container failed to start after 10 attempts"
-                echo "[$(date)] Container logs:"
-                docker logs f5-tts-api 2>/dev/null || echo "[$(date)] No container logs available"
-                echo "[$(date)] Sending failure signal to CloudFormation"
+              if [ $i -eq 30 ]; then
+                echo "[$(date)] Container failed to respond to HTTP requests"
+                docker logs f5-tts-api
                 cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
                 exit 1
               fi
-              echo "[$(date)] Waiting for container to start... ($i/10)"
+              echo "[$(date)] Waiting for HTTP response... ($i/30)"
               sleep 10
-            done
-            
-            # Now wait for health checks (reduced from 20 to 12 attempts)
-            for i in {1..12}; do
-              if docker inspect --format='{{.State.Health.Status}}' f5-tts-api 2>/dev/null | grep -q "healthy"; then
-                echo "[$(date)] Container is healthy!"
-                break
-              fi
-              if [ $i -eq 12 ]; then
-                echo "[$(date)] Container failed to become healthy after 12 attempts"
-                echo "[$(date)] Container status:"
-                docker inspect --format='{{.State.Health.Status}}' f5-tts-api 2>/dev/null || echo "[$(date)] No health status available"
-                echo "[$(date)] Container logs (last 50 lines):"
-                docker logs --tail 50 f5-tts-api 2>/dev/null || echo "[$(date)] No container logs available"
-                
-                # Still signal success if container is running, even if health check fails
-                if docker ps | grep -q f5-tts-api; then
-                  echo "[$(date)] Container is running but not healthy - signaling success anyway"
-                  break
-                else
-                  echo "[$(date)] Container not running - sending failure signal"
-                  cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
-                  exit 1
-                fi
-              fi
-              echo "[$(date)] Waiting for health check... ($i/12)"
-              sleep 15
             done
             
             # Simple health monitoring script

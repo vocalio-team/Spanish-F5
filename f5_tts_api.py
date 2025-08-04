@@ -22,12 +22,16 @@ from f5_tts.infer.utils_infer import (
     load_vocoder,
     preprocess_ref_audio_text,
     infer_process,
+    chunk_text,
     save_spectrogram,
     load_model,
     remove_silence_for_generated_wav,
     target_sample_rate,
     hop_length
 )
+import torchaudio
+import torch
+from importlib import files
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -298,8 +302,8 @@ async def text_to_speech_stream(
 
 @app.post("/tts/upload", response_model=TTSResponse)
 async def text_to_speech_with_upload(
-    request: TTSRequest,
-    ref_audio: Optional[UploadFile] = File(None, description="Reference audio file (optional)"),
+    request: str = Form(...),
+    ref_audio: UploadFile = File(..., description="Reference audio file"),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
@@ -307,16 +311,18 @@ async def text_to_speech_with_upload(
     """
     task_id = str(uuid.uuid4())
     
-    # Save uploaded reference audio or use default
-    if ref_audio is not None:
-        ref_audio_path = f"/tmp/ref_audio_{task_id}.wav"
-        with open(ref_audio_path, "wb") as f:
-            content = await ref_audio.read()
-            f.write(content)
-        logger.info("Using uploaded ref_audio for TTS generation")
-    else:
-        ref_audio_path = "ref_audio/default.wav"  # Use default ref audio
-        logger.info("No ref_audio provided, using default ref_audio")
+    # Parse JSON request from form data
+    try:
+        request_data = json.loads(request)
+        tts_request = TTSRequest(**request_data)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"Invalid request format: {str(e)}")
+    
+    # Save uploaded reference audio
+    ref_audio_path = f"/tmp/ref_audio_{task_id}.wav"
+    with open(ref_audio_path, "wb") as f:
+        content = await ref_audio.read()
+        f.write(content)
     
     # Initialize task
     tasks[task_id] = TaskStatus(
@@ -330,7 +336,7 @@ async def text_to_speech_with_upload(
     background_tasks.add_task(
         process_tts_request,
         task_id,
-        request,
+        tts_request,
         ref_audio_path
     )
     
@@ -638,6 +644,69 @@ async def process_multi_style_request(
         tasks[task_id].status = "failed"
         tasks[task_id].message = f"Multi-style TTS generation failed: {str(e)}"
         tasks[task_id].completed_at = datetime.now().isoformat()
+
+# Utility functions
+def load_model_utils(model_type="F5-TTS", ckpt_file="", vocab_file="", ode_method="euler", use_ema=True, vocoder_name="vocos", local_path="", device="auto"):
+    """Load model and vocoder for TTS inference"""
+    
+    # Determine device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Model configurations
+    if model_type == "F5-TTS":
+        model_cls = DiT
+        model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
+        if ckpt_file == "":
+            ckpt_file = str(files("f5_tts").joinpath("infer/examples/ckpts/F5TTS_Base/model_1200000.safetensors"))
+    elif model_type == "E2-TTS":
+        model_cls = UNetT
+        model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
+        if ckpt_file == "":
+            ckpt_file = str(files("f5_tts").joinpath("infer/examples/ckpts/E2TTS_Base/model_1200000.safetensors"))
+    
+    # Load model
+    model = load_model(
+        model_cls, model_cfg, ckpt_file, vocab_file=vocab_file,
+        ode_method=ode_method, use_ema=use_ema, device=device
+    )
+    
+    # Load vocoder
+    vocoder = load_vocoder(vocoder_name, device=device)
+    
+    return model, vocoder, "custom", "vocos"
+
+def infer_process_utils(
+    ref_audio_path, ref_text, gen_text, model, vocoder, tokenizer, mel_spec_type,
+    speed, nfe_step, cfg_strength, sway_sampling_coef, seed, remove_silence, cross_fade_duration, output_path
+):
+    """Process TTS inference and save to file"""
+    
+    # Set seed if specified
+    if seed != -1:
+        torch.manual_seed(seed)
+    
+    # Process reference audio and text
+    ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_path, ref_text)
+    
+    # Generate audio
+    final_wave, sample_rate = infer_process(
+        ref_audio=ref_audio,
+        ref_text=ref_text,
+        gen_text=gen_text,
+        model_obj=model,
+        vocoder=vocoder,
+        speed=speed,
+        nfe_step=nfe_step,
+        cfg_strength=cfg_strength,
+        sway_sampling_coef=sway_sampling_coef,
+        cross_fade_duration=cross_fade_duration
+    )
+    
+    # Save audio file
+    torchaudio.save(output_path, final_wave.unsqueeze(0).cpu(), sample_rate)
+    
+    return output_path
 
 if __name__ == "__main__":
     import uvicorn
