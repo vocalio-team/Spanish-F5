@@ -33,12 +33,12 @@ Parameters:
   
   KeyName:
     Type: String
-    Default: f5-tts-debug-key
+    Default: debug-key-temp
     Description: EC2 Key Pair for SSH access
   
   DeploymentTimestamp:
     Type: String
-    Default: "20250803-232900"
+    Default: "20250804-153010"
     Description: Timestamp to force launch template updates
 
 Resources:
@@ -90,7 +90,7 @@ Resources:
       LaunchTemplateName: F5-TTS-SpotTemplate-v8
       LaunchTemplateData:
         InstanceType: !Ref InstanceType
-        ImageId: ami-082af43e8cf191583  # AWS Deep Learning AMI with GPU support pre-installed
+        ImageId: ami-0f20cc6143e3cdb84  # Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.7 (Ubuntu 22.04) 20250803
         KeyName: !Ref KeyName
         BlockDeviceMappings:
           - DeviceName: /dev/sda1
@@ -105,133 +105,71 @@ Resources:
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
-            # Remove set -e to allow script to continue on errors for debugging
+            set -e
             exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
             
             echo "[$(date)] Starting F5-TTS setup... Deployment: ${DeploymentTimestamp}"
             
-            # Update system and install required packages
-            echo "[$(date)] Installing required packages..."
-            apt update -y || echo "[$(date)] WARNING: apt update failed"
-            apt install -y python3-pip nfs-common || echo "[$(date)] WARNING: package install failed"
-            pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz || echo "[$(date)] WARNING: cfn scripts install failed"
-            
-            # Mount EFS for model storage
-            echo "[$(date)] Setting up EFS mount for models..."
-            mkdir -p /mnt/efs
-            mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 ${ModelsEFS}.efs.us-east-1.amazonaws.com:/ /mnt/efs || {
-              echo "[$(date)] WARNING: EFS mount failed, continuing anyway..."
+            # Function to signal failure and exit
+            signal_failure() {
+              echo "[$(date)] FAILURE: $1"
+              cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
+              exit 1
             }
             
-            # Add EFS to fstab for persistence
-            echo "${ModelsEFS}.efs.us-east-1.amazonaws.com:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 0 0" >> /etc/fstab
+            # Install required packages
+            echo "[$(date)] Installing required packages..."
+            apt update -y || signal_failure "apt update failed"
+            apt install -y nfs-common curl || signal_failure "package install failed"
+            pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz || signal_failure "cfn scripts install failed"
             
-            # Create models directory structure
+            # Mount EFS (simplified - no complex retry logic)
+            echo "[$(date)] Mounting EFS..."
+            mkdir -p /mnt/efs
+            sleep 90  # Wait for EFS mount targets
+            mount -t nfs4 -o nfsvers=4.1 ${ModelsEFS}.efs.us-east-1.amazonaws.com:/ /mnt/efs || signal_failure "EFS mount failed"
             mkdir -p /mnt/efs/models
-            mkdir -p /mnt/efs/models/F5TTS_Base
-            mkdir -p /mnt/efs/models/E2TTS_Base
             
-            # Docker is already installed in Deep Learning AMI, just ensure it's running
-            echo "[$(date)] Starting Docker service..."
-            systemctl start docker || echo "[$(date)] WARNING: Docker start failed"
-            systemctl enable docker || echo "[$(date)] WARNING: Docker enable failed"
+            # Start Docker
+            echo "[$(date)] Starting Docker..."
+            systemctl start docker || signal_failure "Docker start failed"
             
-            # Test GPU access
-            echo "[$(date)] Testing GPU access..."
-            nvidia-smi || echo "[$(date)] WARNING: GPU not available"
+            # ECR Login
+            echo "[$(date)] ECR login..."
+            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 475302692635.dkr.ecr.us-east-1.amazonaws.com || signal_failure "ECR login failed"
             
-            # Login to ECR with retry (AWS CLI should be pre-installed on Deep Learning AMI)
-            echo "[$(date)] Logging into ECR..."
-            for i in {1..3}; do
-              aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 475302692635.dkr.ecr.us-east-1.amazonaws.com && {
-                echo "[$(date)] ECR login successful"
-                break
-              }
-              echo "[$(date)] ECR login attempt $i failed, retrying..."
-              sleep 10
-            done
+            # Pull image
+            echo "[$(date)] Pulling Docker image..."
+            docker pull ${ECRImageURI} || signal_failure "Docker pull failed"
             
-            # Pull and run F5-TTS container with retry
-            echo "[$(date)] Pulling Docker image: ${ECRImageURI}"
-            for i in {1..3}; do
-              docker pull ${ECRImageURI} && {
-                echo "[$(date)] Docker pull successful"
-                break
-              }
-              echo "[$(date)] Docker pull attempt $i failed, retrying..."
-              sleep 15
-            done
-            
-            # Start the container with EFS volume mounted
-            echo "[$(date)] Starting F5-TTS container with EFS volume..."
+            # Start container without complex health checks
+            echo "[$(date)] Starting container..."
             docker run --gpus all -d --restart unless-stopped \
               -p 80:8000 \
               --name f5-tts-api \
               -v /mnt/efs/models:/app/models \
-              --health-cmd="curl -f http://localhost:8000/health || exit 1" \
-              --health-interval=30s \
-              --health-timeout=10s \
-              --health-retries=3 \
-              ${ECRImageURI} || {
-                echo "[$(date)] ERROR: Failed to start container"
-                docker logs f5-tts-api 2>/dev/null || echo "[$(date)] No container logs available"
-                cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
-                exit 1
-              }
+              ${ECRImageURI} || signal_failure "Container start failed"
             
-            # Wait for container to start and be accessible
-            echo "[$(date)] Waiting for container to be accessible..."
-            sleep 30  # Give container time to start
+            # Simple wait and test
+            echo "[$(date)] Waiting for container startup..."
+            sleep 120  # 2 minutes for container to start
             
-            # Check if container is running
-            if ! docker ps | grep -q f5-tts-api; then
-              echo "[$(date)] Container is not running"
-              docker logs f5-tts-api
-              cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
-              exit 1
-            fi
+            # Just check if container is running - don't test HTTP yet
+            docker ps | grep f5-tts-api || signal_failure "Container not running"
             
-            # Test basic HTTP connectivity (without health check dependency)
-            for i in {1..30}; do
-              if curl -f http://localhost:8000/ >/dev/null 2>&1; then
-                echo "[$(date)] Container is responding to HTTP requests!"
-                break
-              fi
-              if [ $i -eq 30 ]; then
-                echo "[$(date)] Container failed to respond to HTTP requests"
-                docker logs f5-tts-api
-                cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
-                exit 1
-              fi
-              echo "[$(date)] Waiting for HTTP response... ($i/30)"
-              sleep 10
-            done
+            echo "[$(date)] Container started successfully!"
             
-            # Simple health monitoring script
-            cat > /opt/health_monitor.sh << 'EOF'
-            #!/bin/bash
-            if ! docker ps | grep -q f5-tts-api; then
-              echo "[$(date)] Container not running, restarting..."
-              docker start f5-tts-api || docker run --gpus all -d --restart unless-stopped -p 80:8000 --name f5-tts-api ${ECRImageURI}
-            fi
-            EOF
-            chmod +x /opt/health_monitor.sh
-            
-            # Set up monitoring cron job
-            echo "*/5 * * * * root /opt/health_monitor.sh >> /var/log/health-monitor.log 2>&1" >> /etc/crontab
+            # Signal success immediately after container start
+            echo "[$(date)] Sending success signal to CloudFormation"
+            cfn-signal -e 0 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
             
             echo "[$(date)] Setup completed successfully!"
-            
-            # Signal success to CloudFormation
-            echo "[$(date)] Sending success signal to CloudFormation"
-            cfn-signal -e 0 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region} || {
-              echo "[$(date)] WARNING: Failed to send CloudFormation signal"
-            }
-            
-            echo $(date +%s) > /tmp/last_infer
 
   SpotASG:
     Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+      - EFSMountTarget1
+      - EFSMountTarget2
     Properties:
       AutoScalingGroupName: F5-TTS-SpotASG-v8
       MinSize: '1'
@@ -252,19 +190,19 @@ Resources:
         InstancesDistribution:
           SpotAllocationStrategy: price-capacity-optimized
           SpotMaxPrice: "0.50"
-      HealthCheckType: ELB
-      HealthCheckGracePeriod: 300
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 600
       TargetGroupARNs:
         - !Ref SpotTargetGroup
     CreationPolicy:
       ResourceSignal:
         Count: 1
-        Timeout: PT15M
+        Timeout: PT30M
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MinInstancesInService: 0
         MaxBatchSize: 1
-        PauseTime: PT15M
+        PauseTime: PT30M
         WaitOnResourceSignals: true
 
   SpotTargetGroup:

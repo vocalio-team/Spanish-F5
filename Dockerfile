@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for F5-TTS API with CUDA support - Optimized
-FROM nvidia/cuda:12.0.0-runtime-ubuntu22.04 AS base
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS base
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -43,7 +43,7 @@ WORKDIR /app
 RUN groupadd -r f5tts && useradd -r -g f5tts -d /app -s /bin/bash f5tts
 
 # Install PyTorch with CUDA support (use --no-cache-dir to save space)
-RUN pip3 install --no-cache-dir torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+RUN pip3 install --no-cache-dir torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126
 
 # Copy requirements and install Python dependencies
 COPY pyproject.toml ./
@@ -119,7 +119,7 @@ USER f5tts
 EXPOSE 8888 8080
 
 # Production stage - Heavily optimized
-FROM nvidia/cuda:12.0.0-runtime-ubuntu22.04 AS production
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS production
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive

@@ -16,14 +16,20 @@ echo "   Timestamp: $DEPLOYMENT_TIMESTAMP"
 echo "   ECR Repository: $ECR_REPOSITORY"
 echo "   Stack: $STACK_NAME"
 
-# Step 1: Build Docker image
-echo "📦 Building Docker image..."
-docker build -f Dockerfile.api --target production -t f5-tts-api:latest .
+# Step 1: Setup buildx for cross-platform builds
+echo "🔧 Setting up Docker buildx for cross-platform builds..."
+docker buildx create --name f5-builder --use --bootstrap 2>/dev/null || docker buildx use f5-builder
 
-# Step 2: Tag for ECR
-echo "🏷️  Tagging image for ECR..."
-docker tag f5-tts-api:latest $ECR_REPOSITORY:latest
-docker tag f5-tts-api:latest $ECR_REPOSITORY:amd64
+# Step 2: Build AMD64 Docker image using buildx
+echo "📦 Building AMD64 Docker image..."
+docker buildx build \
+  --platform linux/amd64 \
+  --target production \
+  --tag f5-tts-api:latest \
+  --tag $ECR_REPOSITORY:latest \
+  --tag $ECR_REPOSITORY:amd64 \
+  --load \
+  .
 
 # Step 3: Login to ECR
 echo "🔐 Logging into ECR..."
@@ -34,21 +40,39 @@ echo "📤 Pushing image to ECR..."
 docker push $ECR_REPOSITORY:latest
 docker push $ECR_REPOSITORY:amd64
 
-# Step 5: Update CloudFormation stack
-echo "☁️  Updating CloudFormation stack..."
-aws cloudformation update-stack \
-  --stack-name $STACK_NAME \
-  --template-body file://cloudformation.yaml \
-  --parameters \
-    ParameterKey=ECRImageURI,ParameterValue=$ECR_REPOSITORY:amd64 \
-    ParameterKey=DeploymentTimestamp,ParameterValue=$DEPLOYMENT_TIMESTAMP \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region $AWS_REGION
-
-echo "⏳ Waiting for stack update to complete..."
-aws cloudformation wait stack-update-complete \
-  --stack-name $STACK_NAME \
-  --region $AWS_REGION
+# Step 5: Create or Update CloudFormation stack
+echo "☁️  Checking if CloudFormation stack exists..."
+if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION >/dev/null 2>&1; then
+  echo "📝 Updating existing CloudFormation stack..."
+  aws cloudformation update-stack \
+    --stack-name $STACK_NAME \
+    --template-body file://cloudformation.yaml \
+    --parameters \
+      ParameterKey=ECRImageURI,ParameterValue=$ECR_REPOSITORY:amd64 \
+      ParameterKey=DeploymentTimestamp,ParameterValue=$DEPLOYMENT_TIMESTAMP \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --region $AWS_REGION
+  
+  echo "⏳ Waiting for stack update to complete..."
+  aws cloudformation wait stack-update-complete \
+    --stack-name $STACK_NAME \
+    --region $AWS_REGION
+else
+  echo "🆕 Creating new CloudFormation stack..."
+  aws cloudformation create-stack \
+    --stack-name $STACK_NAME \
+    --template-body file://cloudformation.yaml \
+    --parameters \
+      ParameterKey=ECRImageURI,ParameterValue=$ECR_REPOSITORY:amd64 \
+      ParameterKey=DeploymentTimestamp,ParameterValue=$DEPLOYMENT_TIMESTAMP \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --region $AWS_REGION
+  
+  echo "⏳ Waiting for stack creation to complete..."
+  aws cloudformation wait stack-create-complete \
+    --stack-name $STACK_NAME \
+    --region $AWS_REGION
+fi
 
 # Step 6: Get stack outputs
 echo "📋 Stack update completed! Getting outputs..."
