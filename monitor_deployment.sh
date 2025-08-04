@@ -1,6 +1,6 @@
 #!/bin/bash
 
-STACK_NAME="f5-tts-models-upload"
+STACK_NAME="f5-tts-production"
 REGION="us-east-1"
 
 echo "🚀 Monitoring CloudFormation deployment for $STACK_NAME..."

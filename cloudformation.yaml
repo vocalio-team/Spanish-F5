@@ -40,49 +40,22 @@ Parameters:
     Type: String
     Default: "20250804-153010"
     Description: Timestamp to force launch template updates
+  
+  ExistingEFSId:
+    Type: String
+    Default: fs-00c1631283c0bd7e1
+    Description: Existing EFS File System ID with preloaded F5-TTS models
+  
+  EFSSecurityGroupId:
+    Type: String
+    Default: sg-0bd2d39aac3bbee33
+    Description: Security Group ID for the existing EFS mount targets
 
 Resources:
 
-  # EFS File System for storing F5-TTS models
-  ModelsEFS:
-    Type: AWS::EFS::FileSystem
-    Properties:
-      FileSystemTags:
-        - Key: Name
-          Value: F5-TTS-Models
-      PerformanceMode: generalPurpose
-      Encrypted: true
-
-  # EFS Mount Targets
-  EFSMountTarget1:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref ModelsEFS
-      SubnetId: !Ref PrimarySubnetId
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
-
-  EFSMountTarget2:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref ModelsEFS
-      SubnetId: !Ref SecondarySubnetId
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
-
-  # Security Group for EFS
-  EFSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: F5-TTS-EFS-SG-v8
-      GroupDescription: Security group for F5-TTS EFS
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
-          SourceSecurityGroupId: !Ref InstanceSecurityGroup
-          Description: Allow NFS access from instances
+  # Note: Using existing EFS file system with preloaded models
+  # Mount targets already exist from the upload stack
+  # The EFS security group will be updated manually if needed
 
   SpotLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -109,27 +82,34 @@ Resources:
             exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
             
             echo "[$(date)] Starting F5-TTS setup... Deployment: ${DeploymentTimestamp}"
-            
+
             # Function to signal failure and exit
             signal_failure() {
               echo "[$(date)] FAILURE: $1"
               cfn-signal -e 1 --stack ${AWS::StackName} --resource SpotASG --region ${AWS::Region}
               exit 1
             }
-            
+
             # Install required packages
             echo "[$(date)] Installing required packages..."
             apt update -y || signal_failure "apt update failed"
-            apt install -y nfs-common curl || signal_failure "package install failed"
+            apt install -y nfs-common curl python3-pip || signal_failure "package install failed"
             pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz || signal_failure "cfn scripts install failed"
-            
-            # Mount EFS (simplified - no complex retry logic)
-            echo "[$(date)] Mounting EFS..."
+
+            # Mount EFS for model storage (using existing EFS with preloaded models)
+            echo "[$(date)] Setting up EFS mount for models... Using EFS: ${ExistingEFSId}"
             mkdir -p /mnt/efs
-            sleep 90  # Wait for EFS mount targets
-            mount -t nfs4 -o nfsvers=4.1 ${ModelsEFS}.efs.us-east-1.amazonaws.com:/ /mnt/efs || signal_failure "EFS mount failed"
-            mkdir -p /mnt/efs/models
-            
+            sleep 90  # Wait for EFS mount targets to be ready
+            mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 ${ExistingEFSId}.efs.us-east-1.amazonaws.com:/ /mnt/efs || signal_failure "EFS mount failed"
+
+            # Add EFS to fstab for persistence
+            echo "${ExistingEFSId}.efs.us-east-1.amazonaws.com:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 0 0" >> /etc/fstab
+
+            # Verify models are available in EFS
+            echo "[$(date)] Verifying preloaded models in EFS..."
+            ls -la /mnt/efs/models/ || signal_failure "Models directory not found in EFS"
+            ls -la /mnt/efs/models/Spanish/ || echo "[$(date)] WARNING: Spanish models not found"
+
             # Start Docker
             echo "[$(date)] Starting Docker..."
             systemctl start docker || signal_failure "Docker start failed"
@@ -167,9 +147,6 @@ Resources:
 
   SpotASG:
     Type: AWS::AutoScaling::AutoScalingGroup
-    DependsOn:
-      - EFSMountTarget1
-      - EFSMountTarget2
     Properties:
       AutoScalingGroupName: F5-TTS-SpotASG-v8
       MinSize: '1'
@@ -340,7 +317,7 @@ Outputs:
       Name: !Sub "${AWS::StackName}-API-URL"
   
   EFSFileSystemId:
-    Description: EFS File System ID for F5-TTS models
-    Value: !Ref ModelsEFS
+    Description: EFS File System ID for F5-TTS models (existing, preloaded)
+    Value: !Ref ExistingEFSId
     Export:
       Name: !Sub "${AWS::StackName}-EFS-ID"

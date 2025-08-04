@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Simplified CloudFormation for F5-TTS Debugging
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: g4dn.xlarge
+    Description: EC2 Spot GPU Instance Type
+  
+  VpcId:
+    Type: String
+    Default: vpc-d29f88b7
+    Description: VPC ID where resources will be created
+  
+  SubnetId:
+    Type: String
+    Default: subnet-cbc5a6e0
+    Description: Subnet ID for instance
+  
+  KeyName:
+    Type: String
+    Default: f5-tts-debug-key
+    Description: EC2 Key Pair for SSH access
+  
+  ExistingEFSId:
+    Type: String
+    Default: fs-00c1631283c0bd7e1
+    Description: Existing EFS File System ID with preloaded F5-TTS models
+
+Resources:
+
+  # Single EC2 instance for debugging
+  DebugInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: ami-082af43e8cf191583  # AWS Deep Learning AMI
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          
+          echo "[$(date)] Starting F5-TTS debug setup..."
+          
+          # Update system and install required packages
+          echo "[$(date)] Installing required packages..."
+          apt update -y
+          apt install -y python3-pip nfs-common awscli
+          pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+          
+          # Test basic connectivity
+          echo "[$(date)] Testing basic connectivity..."
+          ping -c 3 8.8.8.8 || echo "[$(date)] WARNING: No internet connectivity"
+          
+          # Test GPU
+          echo "[$(date)] Testing GPU access..."
+          nvidia-smi || echo "[$(date)] WARNING: GPU not available"
+          
+          # Test EFS connectivity first
+          echo "[$(date)] Testing EFS connectivity..."
+          mkdir -p /mnt/efs
+          
+          # Try to mount EFS
+          mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,intr,timeo=600,retrans=2 ${ExistingEFSId}.efs.us-east-1.amazonaws.com:/ /mnt/efs && {
+            echo "[$(date)] EFS mount successful!"
+            ls -la /mnt/efs/
+            echo "[$(date)] Contents of /mnt/efs/models:"
+            ls -la /mnt/efs/models/ || echo "[$(date)] No models directory found"
+          } || {
+            echo "[$(date)] EFS mount failed!"
+            echo "[$(date)] Testing network connectivity to EFS..."
+            nslookup ${ExistingEFSId}.efs.us-east-1.amazonaws.com || echo "[$(date)] DNS resolution failed"
+          }
+          
+          # Start Docker service
+          echo "[$(date)] Starting Docker service..."
+          systemctl start docker
+          systemctl enable docker
+          
+          # Test ECR login
+          echo "[$(date)] Testing ECR login..."
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 475302692635.dkr.ecr.us-east-1.amazonaws.com && {
+            echo "[$(date)] ECR login successful!"
+          } || {
+            echo "[$(date)] ECR login failed!"
+          }
+          
+          # Create a simple test file to verify instance is working
+          echo "[$(date)] Creating test marker file..."
+          echo "F5-TTS debug instance started at $(date)" > /tmp/debug-marker.txt
+          
+          echo "[$(date)] Debug setup completed!"
+          echo "[$(date)] Instance is ready for manual debugging via SSH"
+          
+          # Signal success to CloudFormation
+          cfn-signal -e 0 --stack ${AWS::StackName} --resource DebugInstance --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT10M
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: F5-TTS-Debug-SG
+      GroupDescription: Security group for F5-TTS debug instance
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: Allow SSH access
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+          Description: Allow direct API access for testing
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: 10.0.0.0/16
+          Description: Allow NFS for EFS
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: F5-TTS-Debug-Profile
+      Roles:
+        - !Ref EC2Role
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: F5-TTS-Debug-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+        - PolicyName: CloudFormationSignal
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:SignalResource
+                Resource: '*'
+
+Outputs:
+  InstanceId:
+    Description: Debug Instance ID
+    Value: !Ref DebugInstance
+  
+  InstancePublicIP:
+    Description: Public IP of debug instance
+    Value: !GetAtt DebugInstance.PublicIp
+  
+  SSHCommand:
+    Description: SSH command to connect to debug instance
+    Value: !Sub "ssh -i ~/.ssh/${KeyName}.pem ubuntu@${DebugInstance.PublicIp}"
