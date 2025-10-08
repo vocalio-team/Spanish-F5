@@ -42,6 +42,11 @@ class GlobalConfig:
     enable_ref_audio_cache: bool = True
     cache_size_mb: int = 100
 
+    # Regional Spanish settings
+    spanish_region: str = "neutral"  # "neutral", "rioplatense", "colombian", "mexican", "chilean", "caribbean", "andean"
+    auto_detect_region: bool = False  # Auto-detect region from text slang markers
+    apply_regional_phonetics: bool = True  # Apply regional phonetic transformations
+
     @classmethod
     def from_env(cls) -> "GlobalConfig":
         """Load configuration from environment variables."""
@@ -52,6 +57,9 @@ class GlobalConfig:
             device=os.getenv("DEVICE", "auto"),
             default_nfe_step=int(os.getenv("DEFAULT_NFE_STEP", "16")),
             min_chunk_chars=int(os.getenv("MIN_CHUNK_CHARS", "500")),
+            spanish_region=os.getenv("SPANISH_REGION", "neutral"),
+            auto_detect_region=os.getenv("AUTO_DETECT_REGION", "false").lower() == "true",
+            apply_regional_phonetics=os.getenv("APPLY_REGIONAL_PHONETICS", "true").lower() == "true",
         )
 
     def to_dict(self) -> dict:

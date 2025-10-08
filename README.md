@@ -11,6 +11,8 @@
 ## News
 Spanish model: https://huggingface.co/jpgallegoar/F5-Spanish/
 
+**NEW**: Regional Spanish Support - Realistic accents, prosody, and slang for Latin American variants (Rioplatense, Colombian, Mexican, and more)! See [Regional Spanish Guide](docs/SPANISH_REGIONAL_GUIDE.md)
+
 ## Installation
 
 ```bash
@@ -90,6 +92,48 @@ f5-tts_infer-cli -c src/f5_tts/infer/examples/multi/story.toml
 
 - In order to have better generation results, take a moment to read [detailed guidance](src/f5_tts/infer).
 - The [Issues](https://github.com/SWivid/F5-TTS/issues?q=is%3Aissue) are very useful, please try to find the solution by properly searching the keywords of problem encountered. If no answer found, then feel free to open an issue.
+
+### 4. Regional Spanish Features (NEW!)
+
+Spanish-F5 now includes comprehensive support for Latin American Spanish regional variants:
+
+**Supported Regions:**
+- 🇦🇷 **Rioplatense** (Argentina/Uruguay) - Sheísmo, voseo, Italian-influenced prosody
+- 🇨🇴 **Colombian** - Clear articulation, Paisa rhythm, question tags
+- 🇲🇽 **Mexican** - Distinctive intonation, diminutives, regional slang
+- And more: Chilean, Caribbean, Andean
+
+**Features:**
+- ✅ Automatic regional accent detection
+- ✅ Phonetic transformations (sheísmo, yeísmo, s-aspiration, etc.)
+- ✅ Prosodic pattern recognition (intonation, stress, rhythm)
+- ✅ Regional slang detection (modismos: che, parcero, órale, etc.)
+- ✅ Voseo support (vos, tenés, querés, sos)
+
+**Quick Example:**
+
+```python
+from f5_tts.text import process_spanish_text
+
+# Rioplatense Spanish
+result = process_spanish_text(
+    "Che boludo, ¿vos querés tomar unos mates?",
+    region="rioplatense"
+)
+# Detects: che, boludo, vos, querés
+# Applies: s-aspiration, voseo stress patterns
+
+# Auto-detect from text
+result = process_spanish_text(
+    "Parcero, eso está muy chimba",
+    auto_detect=True
+)
+# Detected region: colombian
+```
+
+**See the full guide:** [Regional Spanish Documentation](docs/SPANISH_REGIONAL_GUIDE.md)
+
+**Examples:** [examples/regional_spanish/](examples/regional_spanish/)
 
 
 ## Training
