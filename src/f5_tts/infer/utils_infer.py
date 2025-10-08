@@ -138,9 +138,17 @@ def initialize_asr_pipeline(device=device, dtype=None):
 
 def load_checkpoint(model, ckpt_path, device, dtype=None, use_ema=True):
     if dtype is None:
-        dtype = (
-            torch.float16 if device == "cuda" and torch.cuda.get_device_properties(device).major >= 6 else torch.float32
-        )
+        # Use bfloat16 on Ampere+ (compute capability >= 8.0), float16 on older CUDA GPUs
+        if device == "cuda":
+            compute_capability = torch.cuda.get_device_properties(device).major
+            if compute_capability >= 8:
+                dtype = torch.bfloat16  # Better numerical stability on Ampere+
+            elif compute_capability >= 6:
+                dtype = torch.float16  # Mixed precision for older GPUs
+            else:
+                dtype = torch.float32
+        else:
+            dtype = torch.float32
     model = model.to(dtype)
 
     ckpt_type = ckpt_path.split(".")[-1]
@@ -340,7 +348,11 @@ def infer_process(
 ):
     # Split the input text into batches
     audio, sr = torchaudio.load(ref_audio)
-    max_chars = int(len(ref_text.encode("utf-8")) / (audio.shape[-1] / sr) * (25 - audio.shape[-1] / sr))
+    # Increase max_chars significantly to reduce chunking (fewer chunks = less choppiness)
+    # Original formula creates too many small chunks
+    max_chars = int(len(ref_text.encode("utf-8")) / (audio.shape[-1] / sr) * (30 - audio.shape[-1] / sr))
+    # Set a reasonable minimum to avoid excessive chunking
+    max_chars = max(max_chars, 500)  # At least 500 chars per chunk
     gen_text_batches = chunk_text(gen_text, max_chars=max_chars)
     for i, gen_text in enumerate(gen_text_batches):
         print(f"gen_text {i}", gen_text)
@@ -393,7 +405,14 @@ def infer_batch_process(
     if rms < target_rms:
         audio = audio * target_rms / rms
     if sr != target_sample_rate:
-        resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
+        # Use high-quality resampling (Kaiser window) to reduce aliasing artifacts
+        resampler = torchaudio.transforms.Resample(
+            sr,
+            target_sample_rate,
+            resampling_method="kaiser_window",
+            lowpass_filter_width=64,  # Higher quality filter
+            rolloff=0.99  # Sharper rolloff to preserve frequencies
+        )
         audio = resampler(audio)
     audio = audio.to(device)
 
@@ -418,27 +437,44 @@ def infer_batch_process(
 
         # inference
         with torch.inference_mode():
-            generated, _ = model_obj.sample(
-                cond=audio,
-                text=final_text_list,
-                duration=duration,
-                steps=nfe_step,
-                cfg_strength=cfg_strength,
-                sway_sampling_coef=sway_sampling_coef,
-            )
+            # Use autocast for automatic mixed precision
+            with torch.amp.autocast(device_type=device.type if hasattr(device, 'type') else 'cuda', enabled=device.type == 'cuda' if hasattr(device, 'type') else True):
+                generated, _ = model_obj.sample(
+                    cond=audio,
+                    text=final_text_list,
+                    duration=duration,
+                    steps=nfe_step,
+                    cfg_strength=cfg_strength,
+                    sway_sampling_coef=sway_sampling_coef,
+                )
 
-            generated = generated.to(torch.float32)
-            generated = generated[:, ref_audio_len:, :]
-            generated_mel_spec = generated.permute(0, 2, 1)
-            if mel_spec_type == "vocos":
-                generated_wave = vocoder.decode(generated_mel_spec)
-            elif mel_spec_type == "bigvgan":
-                generated_wave = vocoder(generated_mel_spec)
-            if rms < target_rms:
-                generated_wave = generated_wave * rms / target_rms
+                generated = generated.to(torch.float32)
+                generated = generated[:, ref_audio_len:, :]
+                generated_mel_spec = generated.permute(0, 2, 1)
+                if mel_spec_type == "vocos":
+                    generated_wave = vocoder.decode(generated_mel_spec)
+                elif mel_spec_type == "bigvgan":
+                    generated_wave = vocoder(generated_mel_spec)
+                if rms < target_rms:
+                    generated_wave = generated_wave * rms / target_rms
 
-            # wav -> numpy
-            generated_wave = generated_wave.squeeze().cpu().numpy()
+            # Move to CPU only at the end to minimize transfers
+            generated_wave = generated_wave.squeeze().cpu()
+
+            # Ensure continuous waveform - clamp to prevent clipping artifacts
+            generated_wave = torch.clamp(generated_wave, -1.0, 1.0)
+            generated_wave = generated_wave.numpy()
+
+            # Apply gentle fade-in/out at chunk edges to minimize discontinuities
+            # This helps even if cross-fading is used later
+            edge_fade_samples = int(0.005 * target_sample_rate)  # 5ms fade
+            if len(generated_wave) > 2 * edge_fade_samples:
+                # Fade in at start
+                fade_in_curve = np.linspace(0, 1, edge_fade_samples)
+                generated_wave[:edge_fade_samples] *= fade_in_curve
+                # Fade out at end
+                fade_out_curve = np.linspace(1, 0, edge_fade_samples)
+                generated_wave[-edge_fade_samples:] *= fade_out_curve
 
             generated_waves.append(generated_wave)
             spectrograms.append(generated_mel_spec[0].cpu().numpy())
@@ -466,11 +502,14 @@ def infer_batch_process(
             prev_overlap = prev_wave[-cross_fade_samples:]
             next_overlap = next_wave[:cross_fade_samples]
 
-            # Fade out and fade in
-            fade_out = np.linspace(1, 0, cross_fade_samples)
-            fade_in = np.linspace(0, 1, cross_fade_samples)
+            # Use equal-power crossfading for perceptually smoother transitions
+            # This maintains constant perceived loudness during the transition
+            t = np.linspace(0, 1, cross_fade_samples)
+            # Equal-power curves using cosine
+            fade_out = np.cos(t * np.pi / 2)  # Smooth fade out
+            fade_in = np.sin(t * np.pi / 2)   # Smooth fade in
 
-            # Cross-faded overlap
+            # Cross-faded overlap with equal-power mixing
             cross_faded_overlap = prev_overlap * fade_out + next_overlap * fade_in
 
             # Combine
@@ -482,6 +521,14 @@ def infer_batch_process(
 
     # Create a combined spectrogram
     combined_spectrogram = np.concatenate(spectrograms, axis=1)
+
+    # Remove DC offset to prevent low-frequency distortion
+    final_wave = final_wave - np.mean(final_wave)
+
+    # Normalize to prevent clipping while preserving dynamics
+    max_abs = np.abs(final_wave).max()
+    if max_abs > 0.99:
+        final_wave = final_wave * 0.99 / max_abs
 
     return final_wave, target_sample_rate, combined_spectrogram
 

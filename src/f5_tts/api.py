@@ -73,6 +73,20 @@ class F5TTS:
             model_cls, model_cfg, ckpt_file, mel_spec_type, vocab_file, ode_method, use_ema, self.device
         )
 
+        # Compile model for faster inference (requires PyTorch 2.0+)
+        import os
+        enable_compile = os.getenv("ENABLE_TORCH_COMPILE", "true").lower() == "true"
+        if enable_compile:
+            try:
+                import torch
+                if hasattr(torch, 'compile'):
+                    # Use reduce-overhead mode for better performance with dynamic shapes
+                    print("Compiling model with torch.compile for optimized inference...")
+                    self.ema_model = torch.compile(self.ema_model, mode="reduce-overhead")
+                    print("Model compilation completed successfully")
+            except Exception as e:
+                print(f"Warning: Could not compile model: {e}")
+
     def export_wav(self, wav, file_wave, remove_silence=False):
         sf.write(file_wave, wav, self.target_sample_rate)
 

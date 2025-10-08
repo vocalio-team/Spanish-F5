@@ -16,25 +16,18 @@ import sys
 sys.path.append('src')
 
 # Use the F5TTS API class to avoid argparse conflicts
-from cached_path import cached_path
-from f5_tts.model import DiT, UNetT
-from f5_tts.infer.utils_infer import (
-    load_vocoder,
-    preprocess_ref_audio_text,
-    infer_process,
-    chunk_text,
-    save_spectrogram,
-    load_model,
-    remove_silence_for_generated_wav,
-    target_sample_rate,
-    hop_length
-)
+from f5_tts.api import F5TTS
 import torchaudio
 import torch
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Performance optimization flags
+ENABLE_TORCH_COMPILE = os.getenv("ENABLE_TORCH_COMPILE", "true").lower() == "true"
+ENABLE_CUDNN_BENCHMARK = os.getenv("ENABLE_CUDNN_BENCHMARK", "true").lower() == "true"
+TORCH_MATMUL_PRECISION = os.getenv("TORCH_MATMUL_PRECISION", "high")  # "high" or "highest"
 
 app = FastAPI(
     title="F5-TTS REST API",
@@ -54,13 +47,14 @@ class TTSRequest(BaseModel):
     gen_text: str = Field(description="Text to generate speech for")
     remove_silence: bool = Field(default=False, description="Remove silence from output")
     speed: float = Field(default=1.0, description="Speech speed multiplier")
-    cross_fade_duration: float = Field(default=0.15, description="Cross-fade duration for chunks")
-    nfe_step: int = Field(default=32, description="Number of function evaluations")
+    cross_fade_duration: float = Field(default=0.5, description="Cross-fade duration for chunks (increased for smoother audio)")
+    nfe_step: int = Field(default=16, description="Number of function evaluations (lower = faster, default was 32)")
     cfg_strength: float = Field(default=2.0, description="Classifier-free guidance strength")
     sway_sampling_coef: float = Field(default=-1.0, description="Sway sampling coefficient")
     seed: int = Field(default=-1, description="Random seed (-1 for random)")
     vocoder_name: str = Field(default="vocos", description="Vocoder to use")
     output_format: str = Field(default="wav", description="Output audio format")
+    use_fp16: bool = Field(default=True, description="Use FP16/BF16 for faster inference (recommended)")
 
 class TTSResponse(BaseModel):
     task_id: str
@@ -98,50 +92,72 @@ async def startup_event():
         logger.info("Loading default F5-TTS model...")
         
         # Detect the best available device
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Using device: {device}")
-        
-        # Load vocoder (downloads from HuggingFace)
-        logger.info("Loading vocoder...")
-        vocoder = load_vocoder(vocoder_name="vocos", device=device)
-        
-        # Load F5-TTS model from EFS
-        logger.info("Loading F5-TTS model from EFS...")
-        F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-        
-        # Check if model file exists on EFS, otherwise download from HuggingFace
-        f5_ckpt_path = "/app/models/F5TTS_Base/model_1200000.safetensors"
-        if not os.path.exists(f5_ckpt_path):
-            logger.info("F5-TTS model not found on EFS, downloading from HuggingFace...")
-            f5_ckpt_path = str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
-        
-        F5TTS_ema_model = load_model(
-            DiT, F5TTS_model_cfg, f5_ckpt_path, use_ema=True, device=device
-        )
-        
-        models_cache["F5-TTS"] = {
-            "model": F5TTS_ema_model,
-            "vocoder": vocoder,
-            "model_cfg": F5TTS_model_cfg
-        }
-        
-        # Load E2-TTS model from EFS (optional)
-        logger.info("Loading E2-TTS model from EFS...")
-        E2TTS_model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
-        
-        e2_ckpt_path = "/app/models/E2TTS_Base/model_1200000.safetensors"
-        if os.path.exists(e2_ckpt_path):
-            E2TTS_ema_model = load_model(
-                UNetT, E2TTS_model_cfg, e2_ckpt_path, use_ema=True, device=device
-            )
-            models_cache["E2-TTS"] = {
-                "model": E2TTS_ema_model,
-                "vocoder": vocoder,
-                "model_cfg": E2TTS_model_cfg
-            }
+        import torch
+        if torch.cuda.is_available():
+            device = "cuda"
+            logger.info("CUDA is available, using GPU")
+
+            # Apply CUDA optimizations
+            if ENABLE_CUDNN_BENCHMARK:
+                torch.backends.cudnn.benchmark = True
+                logger.info("Enabled cuDNN benchmark mode for optimal kernel selection")
+
+            # Set matmul precision for faster computation
+            torch.set_float32_matmul_precision(TORCH_MATMUL_PRECISION)
+            logger.info(f"Set matmul precision to: {TORCH_MATMUL_PRECISION}")
+
+            # Enable TF32 on Ampere+ GPUs for faster matmul
+            if torch.cuda.get_device_properties(0).major >= 8:
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                logger.info("Enabled TF32 for Ampere+ GPU")
         else:
-            logger.warning("E2-TTS model not found on EFS, skipping...")
-        
+            device = "cpu"
+            logger.info("CUDA not available, using CPU")
+
+        # Use the F5TTS class with explicit local model paths
+        # Don't use local_path for vocoder, let it download from HF
+        f5tts = F5TTS(
+            model_type="F5-TTS",
+            ckpt_file="/app/models/Spanish/model_1200000.safetensors",
+            vocab_file="/app/models/Spanish/vocab.txt",
+            ode_method="euler",
+            use_ema=True,
+            vocoder_name="vocos",
+            local_path=None,  # Let vocoder download from HF
+            device=device
+        )
+        models_cache["F5-TTS"] = f5tts
+
+        # Warmup inference to optimize CUDA kernels
+        logger.info("Running warmup inference to optimize CUDA kernels...")
+        try:
+            warmup_wav, _, _ = f5tts.infer(
+                ref_file="ref_audio/short.wav",
+                ref_text="",
+                gen_text="Hola",
+                nfe_step=8,  # Use fewer steps for warmup
+                speed=1.0,
+                remove_silence=False
+            )
+            logger.info("Warmup inference completed successfully")
+        except Exception as warmup_err:
+            logger.warning(f"Warmup inference failed (non-critical): {warmup_err}")
+
+        # E2-TTS model loading disabled (model architecture mismatch)
+        # logger.info("Loading E2-TTS model...")
+        # e2tts = F5TTS(
+        #     model_type="E2-TTS",
+        #     ckpt_file="/app/models/E2TTS_Base/model_1200000.safetensors",
+        #     vocab_file="",
+        #     ode_method="euler",
+        #     use_ema=True,
+        #     vocoder_name="vocos",
+        #     local_path=None,  # Let vocoder download from HF
+        #     device=device
+        # )
+        # models_cache["E2-TTS"] = e2tts
+
         model_loading_status["loading"] = False
         model_loading_status["loaded"] = True
         logger.info(f"Models loaded successfully: {list(models_cache.keys())}")
@@ -195,53 +211,51 @@ async def text_to_speech(
     Generate speech from text using default reference audio - Real-time response
     """
     try:
-        # Use default reference audio
-        ref_audio_path = "ref_audio/default.wav"
-        logger.info("Real-time TTS generation with default ref_audio")
-        
+        import time
+        start_time = time.time()
+
+        # Use shorter reference audio for faster inference
+        ref_audio_path = "ref_audio/short.wav"
+        logger.info(f"Real-time TTS generation with short ref_audio (6s), nfe_step={request.nfe_step}, text_len={len(request.gen_text)}")
+
         # Get model from cache
         if request.model not in models_cache:
             raise HTTPException(status_code=400, detail=f"Model {request.model} not loaded")
-        
-        model_data = models_cache[request.model]
-        ema_model = model_data["model"]
-        vocoder = model_data["vocoder"]
-        
+
+        f5tts_instance = models_cache[request.model]
+
         # Generate unique filename for output
         output_filename = f"tts_{uuid.uuid4().hex}.wav"
         output_path = f"/tmp/{output_filename}"
-        
-        # Process TTS synchronously using utils_infer approach
+
+        # Process TTS synchronously
         def run_inference():
-            # Preprocess reference audio and text
-            ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_path, request.ref_text)
-            
-            # Generate audio using infer_process
-            final_wave, sample_rate, combined_spectrogram = infer_process(
-                ref_audio,
-                ref_text,
-                request.gen_text,
-                ema_model,
-                vocoder,
+            inference_start = time.time()
+            logger.info("Starting TTS inference...")
+            wav, sr, spect = f5tts_instance.infer(
+                ref_file=ref_audio_path,
+                ref_text=request.ref_text,
+                gen_text=request.gen_text,
+                target_rms=0.1,
                 cross_fade_duration=request.cross_fade_duration,
                 speed=request.speed,
                 nfe_step=request.nfe_step,
                 cfg_strength=request.cfg_strength,
                 sway_sampling_coef=request.sway_sampling_coef
             )
-            
-            # Save to file (convert numpy to torch if needed)
-            if isinstance(final_wave, torch.Tensor):
-                torchaudio.save(output_path, final_wave.unsqueeze(0).cpu(), sample_rate)
-            else:
-                # Convert numpy to torch tensor
-                final_wave_tensor = torch.from_numpy(final_wave)
-                torchaudio.save(output_path, final_wave_tensor.unsqueeze(0), sample_rate)
-            return final_wave, sample_rate, combined_spectrogram
-        
+            inference_time = time.time() - inference_start
+            logger.info(f"TTS inference completed in {inference_time:.2f}s")
+
+            # Save to file
+            torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
+            return wav, sr, spect
+
         # Run inference in executor to avoid blocking
         await asyncio.get_event_loop().run_in_executor(None, run_inference)
-        
+
+        total_time = time.time() - start_time
+        logger.info(f"Total TTS generation time: {total_time:.2f}s")
+
         # Return the audio file directly
         return FileResponse(
             output_path,
@@ -264,53 +278,40 @@ async def text_to_speech_stream(
     Generate speech from text and return audio as streaming response - Real-time
     """
     try:
-        # Use default reference audio
-        ref_audio_path = "ref_audio/default.wav"
-        logger.info("Real-time streaming TTS generation with default ref_audio")
-        
+        # Use shorter reference audio for faster inference
+        ref_audio_path = "ref_audio/short.wav"
+        logger.info("Real-time streaming TTS generation with short ref_audio")
+
         # Get model from cache
         if request.model not in models_cache:
             raise HTTPException(status_code=400, detail=f"Model {request.model} not loaded")
-        
-        model_data = models_cache[request.model]
-        ema_model = model_data["model"]
-        vocoder = model_data["vocoder"]
-        
+
+        f5tts_instance = models_cache[request.model]
+
         # Generate unique filename for output
         output_filename = f"tts_{uuid.uuid4().hex}.wav"
         output_path = f"/tmp/{output_filename}"
-        
-        # Process TTS synchronously using utils_infer approach
+
+        # Process TTS synchronously
         def run_inference():
-            # Preprocess reference audio and text
-            ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_path, request.ref_text)
-            
-            # Generate audio using infer_process
-            final_wave, sample_rate, combined_spectrogram = infer_process(
-                ref_audio,
-                ref_text,
-                request.gen_text,
-                ema_model,
-                vocoder,
+            wav, sr, spect = f5tts_instance.infer(
+                ref_file=ref_audio_path,
+                ref_text=request.ref_text,
+                gen_text=request.gen_text,
+                target_rms=0.1,
                 cross_fade_duration=request.cross_fade_duration,
                 speed=request.speed,
                 nfe_step=request.nfe_step,
                 cfg_strength=request.cfg_strength,
                 sway_sampling_coef=request.sway_sampling_coef
             )
-            
-            # Save to file (convert numpy to torch if needed)
-            if isinstance(final_wave, torch.Tensor):
-                torchaudio.save(output_path, final_wave.unsqueeze(0).cpu(), sample_rate)
-            else:
-                # Convert numpy to torch tensor
-                final_wave_tensor = torch.from_numpy(final_wave)
-                torchaudio.save(output_path, final_wave_tensor.unsqueeze(0), sample_rate)
-            return final_wave, sample_rate, combined_spectrogram
-        
+            # Save to file
+            torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
+            return wav, sr, spect
+
         # Run inference in executor to avoid blocking
         await asyncio.get_event_loop().run_in_executor(None, run_inference)
-        
+
         # Stream the audio file
         def iterfile():
             with open(output_path, mode="rb") as file_like:
@@ -320,13 +321,13 @@ async def text_to_speech_stream(
                 os.unlink(output_path)
             except:
                 pass
-        
+
         return StreamingResponse(
             iterfile(),
             media_type="audio/wav",
             headers={"Content-Disposition": f"inline; filename={output_filename}"}
         )
-        
+
     except Exception as e:
         logger.error(f"Error in streaming TTS: {e}")
         import traceback
@@ -546,57 +547,44 @@ async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path:
         # Update task status
         tasks[task_id].status = "processing"
         tasks[task_id].message = "Getting model..."
-        
+
         # Get model from cache
         if request.model not in models_cache:
             tasks[task_id].status = "failed"
             tasks[task_id].message = f"Model {request.model} not loaded"
             return
-        
-        model_data = models_cache[request.model]
-        ema_model = model_data["model"]
-        vocoder = model_data["vocoder"]
-        
+
+        f5tts_instance = models_cache[request.model]
+
         # Update task status
         tasks[task_id].message = "Processing audio..."
-        
+
         # Generate output path
         output_path = f"/tmp/output_{task_id}.wav"
-        
-        # Process TTS using utils_infer approach
+
+        # Process TTS
         def run_inference():
-            # Preprocess reference audio and text
-            ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_path, request.ref_text)
-            
-            # Generate audio using infer_process
-            final_wave, sample_rate, combined_spectrogram = infer_process(
-                ref_audio,
-                ref_text,
-                request.gen_text,
-                ema_model,
-                vocoder,
+            wav, sr, spect = f5tts_instance.infer(
+                ref_file=ref_audio_path,
+                ref_text=request.ref_text,
+                gen_text=request.gen_text,
+                target_rms=0.1,
                 cross_fade_duration=request.cross_fade_duration,
                 speed=request.speed,
                 nfe_step=request.nfe_step,
                 cfg_strength=request.cfg_strength,
                 sway_sampling_coef=request.sway_sampling_coef
             )
-            
-            # Save to file (convert numpy to torch if needed)
-            if isinstance(final_wave, torch.Tensor):
-                torchaudio.save(output_path, final_wave.unsqueeze(0).cpu(), sample_rate)
-            else:
-                # Convert numpy to torch tensor
-                final_wave_tensor = torch.from_numpy(final_wave)
-                torchaudio.save(output_path, final_wave_tensor.unsqueeze(0), sample_rate)
-            return final_wave, sample_rate, combined_spectrogram
-        
+            # Save to file
+            torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
+            return wav, sr, spect
+
         # Run inference in executor
         await asyncio.get_event_loop().run_in_executor(None, run_inference)
-        
+
         # Store audio file reference
         audio_files[task_id] = output_path
-        
+
         # Update task completion
         tasks[task_id].status = "completed"
         tasks[task_id].message = "TTS generation completed successfully"
@@ -605,7 +593,7 @@ async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path:
             "audio_url": f"/audio/{task_id}",
             "output_path": output_path
         }
-        
+
     except Exception as e:
         logger.error(f"Error processing TTS request {task_id}: {e}")
         import traceback
@@ -615,9 +603,9 @@ async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path:
         tasks[task_id].completed_at = datetime.now().isoformat()
 
 async def process_multi_style_request(
-    task_id: str, 
-    request: MultiStyleRequest, 
-    ref_audio_path: str, 
+    task_id: str,
+    request: MultiStyleRequest,
+    ref_audio_path: str,
     voice_paths: Dict[str, str]
 ):
     """
@@ -627,54 +615,39 @@ async def process_multi_style_request(
         # Update task status
         tasks[task_id].status = "processing"
         tasks[task_id].message = "Processing multi-style TTS..."
-        
-        # Load model if not cached
+
+        # Get model from cache
         if request.model not in models_cache:
-            model, vocoder, tokenizer, mel_spec_type = load_model_utils(
-                model_type=request.model,
-                ckpt_file="",
-                vocab_file="",
-                ode_method="euler",
-                use_ema=True,
-                vocoder_name="vocos",
-                local_path="",
-                device="auto"
-            )
-            models_cache[request.model] = {
-                "model": model,
-                "vocoder": vocoder,
-                "tokenizer": tokenizer,
-                "mel_spec_type": mel_spec_type
-            }
-        
-        model_data = models_cache[request.model]
+            tasks[task_id].status = "failed"
+            tasks[task_id].message = f"Model {request.model} not loaded"
+            return
+
+        f5tts_instance = models_cache[request.model]
         output_path = f"/tmp/multi_output_{task_id}.wav"
-        
+
         # Process multi-style TTS (simplified implementation)
         # In a full implementation, you'd parse voice markers and switch voices
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            infer_process_utils,
-            ref_audio_path,
-            "",  # Auto-transcribe
-            request.gen_text,
-            model_data["model"],
-            model_data["vocoder"],
-            model_data["tokenizer"],
-            model_data["mel_spec_type"],
-            1.0,  # speed
-            32,   # nfe_step
-            2.0,  # cfg_strength
-            -1.0, # sway_sampling_coef
-            -1,   # seed
-            request.remove_silence,
-            0.15, # cross_fade_duration
-            output_path
-        )
-        
+        def run_inference():
+            wav, sr, spect = f5tts_instance.infer(
+                ref_file=ref_audio_path,
+                ref_text="",  # Auto-transcribe
+                gen_text=request.gen_text,
+                target_rms=0.1,
+                speed=1.0,
+                nfe_step=32,
+                cfg_strength=2.0,
+                sway_sampling_coef=-1.0,
+                remove_silence=request.remove_silence
+            )
+            # Save to file
+            torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
+            return wav, sr, spect
+
+        await asyncio.get_event_loop().run_in_executor(None, run_inference)
+
         # Store audio file reference
         audio_files[task_id] = output_path
-        
+
         # Update task completion
         tasks[task_id].status = "completed"
         tasks[task_id].message = "Multi-style TTS generation completed successfully"
@@ -683,91 +656,12 @@ async def process_multi_style_request(
             "audio_url": f"/audio/{task_id}",
             "output_path": output_path
         }
-        
+
     except Exception as e:
         logger.error(f"Error processing multi-style TTS request {task_id}: {e}")
         tasks[task_id].status = "failed"
         tasks[task_id].message = f"Multi-style TTS generation failed: {str(e)}"
         tasks[task_id].completed_at = datetime.now().isoformat()
-
-# Utility functions
-def load_model_utils(model_type="F5-TTS", ckpt_file="", vocab_file="", ode_method="euler", use_ema=True, vocoder_name="vocos", local_path="", device="auto"):
-    """Load model and vocoder for TTS inference"""
-    
-    # Determine device
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    # Model configurations
-    if model_type == "F5-TTS":
-        model_cls = DiT
-        model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-        if ckpt_file == "":
-            # Try EFS first, then HuggingFace
-            efs_path = "/app/models/F5TTS_Base/model_1200000.safetensors"
-            if os.path.exists(efs_path):
-                ckpt_file = efs_path
-            else:
-                ckpt_file = str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
-    elif model_type == "E2-TTS":
-        model_cls = UNetT
-        model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
-        if ckpt_file == "":
-            # Try EFS first, then skip E2-TTS if not available
-            efs_path = "/app/models/E2TTS_Base/model_1200000.safetensors"
-            if os.path.exists(efs_path):
-                ckpt_file = efs_path
-            else:
-                logger.warning("E2-TTS model not available on EFS or HuggingFace")
-                return None, None, None, None
-    
-    # Load model
-    model = load_model(
-        model_cls, model_cfg, ckpt_file, vocab_file=vocab_file,
-        ode_method=ode_method, use_ema=use_ema, device=device
-    )
-    
-    # Load vocoder
-    vocoder = load_vocoder(vocoder_name, device=device)
-    
-    return model, vocoder, "custom", "vocos"
-
-def infer_process_utils(
-    ref_audio_path, ref_text, gen_text, model, vocoder, tokenizer, mel_spec_type,
-    speed, nfe_step, cfg_strength, sway_sampling_coef, seed, remove_silence, cross_fade_duration, output_path
-):
-    """Process TTS inference and save to file"""
-    
-    # Set seed if specified
-    if seed != -1:
-        torch.manual_seed(seed)
-    
-    # Process reference audio and text
-    ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_path, ref_text)
-    
-    # Generate audio
-    final_wave, sample_rate = infer_process(
-        ref_audio=ref_audio,
-        ref_text=ref_text,
-        gen_text=gen_text,
-        model_obj=model,
-        vocoder=vocoder,
-        speed=speed,
-        nfe_step=nfe_step,
-        cfg_strength=cfg_strength,
-        sway_sampling_coef=sway_sampling_coef,
-        cross_fade_duration=cross_fade_duration
-    )
-    
-    # Save audio file (convert numpy to torch if needed)
-    if isinstance(final_wave, torch.Tensor):
-        torchaudio.save(output_path, final_wave.unsqueeze(0).cpu(), sample_rate)
-    else:
-        # Convert numpy to torch tensor
-        final_wave_tensor = torch.from_numpy(final_wave)
-        torchaudio.save(output_path, final_wave_tensor.unsqueeze(0), sample_rate)
-    
-    return output_path
 
 if __name__ == "__main__":
     import uvicorn
