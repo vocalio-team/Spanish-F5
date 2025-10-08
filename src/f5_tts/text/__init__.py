@@ -33,6 +33,15 @@ from .prosody import (
     format_prosody_report,
 )
 
+from .breath_pause import (
+    PauseType,
+    Pause,
+    BreathPattern,
+    BreathPauseAnalyzer,
+    analyze_breath_pauses,
+    format_breath_report,
+)
+
 __all__ = [
     "BaseTextChunker",
     "SentenceBasedChunker",
@@ -58,4 +67,11 @@ __all__ = [
     "SpanishProsodyAnalyzer",
     "analyze_spanish_prosody",
     "format_prosody_report",
+    # Breath and pause modeling
+    "PauseType",
+    "Pause",
+    "BreathPattern",
+    "BreathPauseAnalyzer",
+    "analyze_breath_pauses",
+    "format_breath_report",
 ]

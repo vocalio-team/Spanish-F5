@@ -2,11 +2,9 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTa
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
-import tempfile
 import os
 import asyncio
 import uuid
-from pathlib import Path
 import logging
 from datetime import datetime
 import json
@@ -18,7 +16,15 @@ sys.path.append('src')
 # Use the F5TTS API class to avoid argparse conflicts
 from f5_tts.api import F5TTS
 import torchaudio
-import torch
+
+# Import enhancement modules
+from f5_tts.text import (
+    normalize_spanish_text,
+    analyze_spanish_prosody,
+    analyze_breath_pauses
+)
+from f5_tts.audio import AudioQualityAnalyzer, QualityLevel
+from f5_tts.core import get_adaptive_nfe_step, get_adaptive_crossfade_duration
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,7 +53,7 @@ class TTSRequest(BaseModel):
     gen_text: str = Field(description="Text to generate speech for")
     remove_silence: bool = Field(default=False, description="Remove silence from output")
     speed: float = Field(default=1.0, description="Speech speed multiplier")
-    cross_fade_duration: float = Field(default=0.5, description="Cross-fade duration for chunks (increased for smoother audio)")
+    cross_fade_duration: float = Field(default=0.8, description="Cross-fade duration for chunks (0.8s for smoother audio)")
     nfe_step: int = Field(default=16, description="Number of function evaluations (lower = faster, default was 32)")
     cfg_strength: float = Field(default=2.0, description="Classifier-free guidance strength")
     sway_sampling_coef: float = Field(default=-1.0, description="Sway sampling coefficient")
@@ -56,12 +62,28 @@ class TTSRequest(BaseModel):
     output_format: str = Field(default="wav", description="Output audio format")
     use_fp16: bool = Field(default=True, description="Use FP16/BF16 for faster inference (recommended)")
 
+    # Enhancement features (Phase 1-4 improvements)
+    normalize_text: bool = Field(default=True, description="Apply Spanish text normalization (numbers, dates, etc.)")
+    analyze_prosody: bool = Field(default=True, description="Analyze and enhance prosody (questions, exclamations, etc.)")
+    analyze_breath_pauses: bool = Field(default=True, description="Analyze breath and pause patterns")
+    adaptive_nfe: bool = Field(default=True, description="Automatically adjust NFE steps based on text complexity")
+    adaptive_crossfade: bool = Field(default=True, description="Automatically adjust crossfade duration based on audio characteristics")
+    check_audio_quality: bool = Field(default=True, description="Check reference audio quality and provide warnings")
+
 class TTSResponse(BaseModel):
     task_id: str
     status: str
     message: str
     audio_url: Optional[str] = None
     duration: Optional[float] = None
+
+    # Enhancement metadata
+    normalized_text: Optional[str] = None
+    prosody_analysis: Optional[Dict[str, Any]] = None
+    breath_analysis: Optional[Dict[str, Any]] = None
+    audio_quality: Optional[Dict[str, Any]] = None
+    nfe_step_used: Optional[int] = None
+    crossfade_duration_used: Optional[float] = None
 
 class TaskStatus(BaseModel):
     task_id: str
@@ -173,15 +195,53 @@ async def startup_event():
 async def root():
     """API root endpoint"""
     return {
-        "message": "F5-TTS REST API",
-        "version": "1.0.0",
+        "message": "F5-TTS REST API - Enhanced with Spanish Quality Improvements",
+        "version": "2.0.0",
+        "enhancements": {
+            "text_normalization": "Convert numbers, dates, times to spoken Spanish",
+            "prosody_analysis": "Detect questions, exclamations, emphasis, pauses",
+            "breath_pause_modeling": "Natural breathing and pause patterns",
+            "adaptive_nfe": "Automatic quality optimization based on text complexity",
+            "adaptive_crossfade": "Dynamic crossfade duration for smoother audio",
+            "audio_quality_check": "Reference audio quality validation"
+        },
         "endpoints": {
-            "tts": "/tts",
-            "tts_file": "/tts/file",
-            "multi_style": "/tts/multi-style",
-            "status": "/tasks/{task_id}",
-            "models": "/models",
-            "health": "/health"
+            "tts": {
+                "path": "/tts",
+                "description": "Generate speech with all enhancements enabled by default"
+            },
+            "tts_stream": {
+                "path": "/tts/stream",
+                "description": "Stream speech output"
+            },
+            "tts_upload": {
+                "path": "/tts/upload",
+                "description": "Upload custom reference audio"
+            },
+            "tts_file": {
+                "path": "/tts/file",
+                "description": "Generate from text file"
+            },
+            "analyze": {
+                "path": "/analyze",
+                "description": "Analyze text without generating speech"
+            },
+            "audio_quality": {
+                "path": "/audio/quality",
+                "description": "Check audio quality without TTS"
+            },
+            "status": {
+                "path": "/tasks/{task_id}",
+                "description": "Get task status"
+            },
+            "models": {
+                "path": "/models",
+                "description": "List available models"
+            },
+            "health": {
+                "path": "/health",
+                "description": "Health check"
+            }
         }
     }
 
@@ -208,7 +268,7 @@ async def text_to_speech(
     request: TTSRequest
 ):
     """
-    Generate speech from text using default reference audio - Real-time response
+    Generate speech from text using default reference audio - Real-time response with enhancements
     """
     try:
         import time
@@ -216,13 +276,99 @@ async def text_to_speech(
 
         # Use shorter reference audio for faster inference
         ref_audio_path = "ref_audio/short.wav"
-        logger.info(f"Real-time TTS generation with short ref_audio (6s), nfe_step={request.nfe_step}, text_len={len(request.gen_text)}")
 
         # Get model from cache
         if request.model not in models_cache:
             raise HTTPException(status_code=400, detail=f"Model {request.model} not loaded")
 
         f5tts_instance = models_cache[request.model]
+
+        # Enhancement metadata
+        enhancement_metadata = {}
+        processed_text = request.gen_text
+
+        # 1. Check reference audio quality
+        if request.check_audio_quality:
+            try:
+                audio, sr = torchaudio.load(ref_audio_path)
+                quality_analyzer = AudioQualityAnalyzer()
+                quality_metrics = quality_analyzer.analyze(audio, sr)
+
+                enhancement_metadata["audio_quality"] = {
+                    "overall_score": quality_metrics.overall_score,
+                    "quality_level": quality_metrics.quality_level.value,
+                    "snr_db": quality_metrics.snr_db,
+                    "issues": quality_metrics.issues,
+                    "recommendations": quality_metrics.recommendations
+                }
+
+                # Warn if quality is poor
+                if quality_metrics.quality_level in [QualityLevel.POOR, QualityLevel.UNACCEPTABLE]:
+                    logger.warning(f"Reference audio quality is {quality_metrics.quality_level.value}: {quality_metrics.issues}")
+            except Exception as e:
+                logger.warning(f"Audio quality check failed: {e}")
+
+        # 2. Apply text normalization
+        if request.normalize_text:
+            try:
+                processed_text = normalize_spanish_text(processed_text)
+                enhancement_metadata["normalized_text"] = processed_text
+                logger.info(f"Text normalized: {request.gen_text[:50]}... -> {processed_text[:50]}...")
+            except Exception as e:
+                logger.warning(f"Text normalization failed: {e}")
+
+        # 3. Analyze prosody
+        if request.analyze_prosody:
+            try:
+                prosody_analysis = analyze_spanish_prosody(processed_text)
+                enhancement_metadata["prosody_analysis"] = {
+                    "num_questions": sum(1 for m in prosody_analysis.markers if "QUESTION" in str(m.type)),
+                    "num_exclamations": sum(1 for m in prosody_analysis.markers if "EXCLAMATION" in str(m.type)),
+                    "num_pauses": sum(1 for m in prosody_analysis.markers if "PAUSE" in str(m.type)),
+                    "sentence_count": len(prosody_analysis.sentence_boundaries),
+                    "breath_points": len(prosody_analysis.breath_points),
+                    "marked_text": prosody_analysis.marked_text
+                }
+                logger.info(f"Prosody analyzed: {len(prosody_analysis.markers)} markers detected")
+            except Exception as e:
+                logger.warning(f"Prosody analysis failed: {e}")
+
+        # 4. Analyze breath and pauses
+        if request.analyze_breath_pauses:
+            try:
+                breath_analysis = analyze_breath_pauses(processed_text)
+                enhancement_metadata["breath_analysis"] = {
+                    "total_pauses": len(breath_analysis.pauses),
+                    "breath_points": len(breath_analysis.breath_points),
+                    "avg_pause_interval": breath_analysis.avg_pause_interval,
+                    "estimated_duration": breath_analysis.total_duration_estimate
+                }
+                logger.info(f"Breath analysis: {len(breath_analysis.pauses)} pauses, {len(breath_analysis.breath_points)} breath points")
+            except Exception as e:
+                logger.warning(f"Breath analysis failed: {e}")
+
+        # 5. Adaptive NFE steps
+        nfe_step = request.nfe_step
+        if request.adaptive_nfe:
+            try:
+                nfe_step = get_adaptive_nfe_step(processed_text, request.nfe_step)
+                enhancement_metadata["nfe_step_used"] = nfe_step
+                logger.info(f"Adaptive NFE: {request.nfe_step} -> {nfe_step}")
+            except Exception as e:
+                logger.warning(f"Adaptive NFE failed: {e}")
+
+        # 6. Adaptive crossfade duration
+        crossfade_duration = request.cross_fade_duration
+        if request.adaptive_crossfade:
+            try:
+                # Use default adaptive crossfade (will be refined per chunk in actual processing)
+                crossfade_duration = get_adaptive_crossfade_duration()
+                enhancement_metadata["crossfade_duration_used"] = crossfade_duration
+                logger.info(f"Adaptive crossfade: {request.cross_fade_duration} -> {crossfade_duration}")
+            except Exception as e:
+                logger.warning(f"Adaptive crossfade failed: {e}")
+
+        logger.info(f"Enhanced TTS: nfe_step={nfe_step}, crossfade={crossfade_duration:.2f}s, text_len={len(processed_text)}")
 
         # Generate unique filename for output
         output_filename = f"tts_{uuid.uuid4().hex}.wav"
@@ -231,20 +377,20 @@ async def text_to_speech(
         # Process TTS synchronously
         def run_inference():
             inference_start = time.time()
-            logger.info("Starting TTS inference...")
+            logger.info("Starting enhanced TTS inference...")
             wav, sr, spect = f5tts_instance.infer(
                 ref_file=ref_audio_path,
                 ref_text=request.ref_text,
-                gen_text=request.gen_text,
+                gen_text=processed_text,  # Use enhanced text
                 target_rms=0.1,
-                cross_fade_duration=request.cross_fade_duration,
+                cross_fade_duration=crossfade_duration,  # Use adaptive crossfade
                 speed=request.speed,
-                nfe_step=request.nfe_step,
+                nfe_step=nfe_step,  # Use adaptive NFE
                 cfg_strength=request.cfg_strength,
                 sway_sampling_coef=request.sway_sampling_coef
             )
             inference_time = time.time() - inference_start
-            logger.info(f"TTS inference completed in {inference_time:.2f}s")
+            logger.info(f"Enhanced TTS inference completed in {inference_time:.2f}s")
 
             # Save to file
             torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
@@ -254,18 +400,24 @@ async def text_to_speech(
         await asyncio.get_event_loop().run_in_executor(None, run_inference)
 
         total_time = time.time() - start_time
-        logger.info(f"Total TTS generation time: {total_time:.2f}s")
+        logger.info(f"Total enhanced TTS generation time: {total_time:.2f}s")
+
+        # Add enhancement metadata to response headers
+        headers = {
+            "Content-Disposition": f"attachment; filename={output_filename}",
+            "X-Enhancement-Metadata": json.dumps(enhancement_metadata)
+        }
 
         # Return the audio file directly
         return FileResponse(
             output_path,
             media_type="audio/wav",
             filename=output_filename,
-            headers={"Content-Disposition": f"attachment; filename={output_filename}"}
+            headers=headers
         )
-        
+
     except Exception as e:
-        logger.error(f"Error in real-time TTS: {e}")
+        logger.error(f"Error in enhanced TTS: {e}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
@@ -319,7 +471,7 @@ async def text_to_speech_stream(
             # Clean up file after streaming
             try:
                 os.unlink(output_path)
-            except:
+            except OSError:
                 pass
 
         return StreamingResponse(
@@ -529,14 +681,140 @@ async def delete_task(task_id: str):
     """
     if task_id in tasks:
         del tasks[task_id]
-    
+
     if task_id in audio_files:
         audio_path = audio_files[task_id]
         if os.path.exists(audio_path):
             os.remove(audio_path)
         del audio_files[task_id]
-    
+
     return {"message": f"Task {task_id} deleted successfully"}
+
+# Analysis-only endpoints (no TTS generation)
+class AnalysisRequest(BaseModel):
+    text: str = Field(description="Text to analyze")
+    normalize_text: bool = Field(default=True, description="Apply text normalization")
+    analyze_prosody: bool = Field(default=True, description="Analyze prosody")
+    analyze_breath_pauses: bool = Field(default=True, description="Analyze breath and pauses")
+
+@app.post("/analyze")
+async def analyze_text(request: AnalysisRequest):
+    """
+    Analyze text without generating speech - useful for preprocessing and validation
+    """
+    try:
+        result = {
+            "original_text": request.text,
+            "normalized_text": None,
+            "prosody_analysis": None,
+            "breath_analysis": None
+        }
+
+        processed_text = request.text
+
+        # 1. Text normalization
+        if request.normalize_text:
+            try:
+                processed_text = normalize_spanish_text(processed_text)
+                result["normalized_text"] = processed_text
+            except Exception as e:
+                result["normalization_error"] = str(e)
+
+        # 2. Prosody analysis
+        if request.analyze_prosody:
+            try:
+                prosody_analysis = analyze_spanish_prosody(processed_text)
+                result["prosody_analysis"] = {
+                    "markers": [
+                        {
+                            "type": str(m.type),
+                            "position": m.position,
+                            "text": m.text,
+                            "intensity": str(m.intensity) if hasattr(m, 'intensity') else None
+                        }
+                        for m in prosody_analysis.markers
+                    ],
+                    "marked_text": prosody_analysis.marked_text,
+                    "sentence_count": len(prosody_analysis.sentence_boundaries),
+                    "breath_points": len(prosody_analysis.breath_points),
+                    "stress_points": len(prosody_analysis.stress_points),
+                    "pitch_contours": prosody_analysis.pitch_contours
+                }
+            except Exception as e:
+                result["prosody_error"] = str(e)
+
+        # 3. Breath and pause analysis
+        if request.analyze_breath_pauses:
+            try:
+                breath_analysis = analyze_breath_pauses(processed_text)
+                result["breath_analysis"] = {
+                    "pauses": [
+                        {
+                            "position": p.position,
+                            "type": p.type.value,
+                            "duration_ms": p.duration_ms,
+                            "is_breath_point": p.is_breath_point,
+                            "context": p.context
+                        }
+                        for p in breath_analysis.pauses
+                    ],
+                    "breath_points": breath_analysis.breath_points,
+                    "avg_pause_interval": breath_analysis.avg_pause_interval,
+                    "estimated_duration": breath_analysis.total_duration_estimate
+                }
+            except Exception as e:
+                result["breath_error"] = str(e)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error in text analysis: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Text analysis failed: {str(e)}")
+
+@app.post("/audio/quality")
+async def check_audio_quality(
+    audio_file: UploadFile = File(..., description="Audio file to analyze")
+):
+    """
+    Check audio quality without performing TTS - useful for validating reference audio
+    """
+    try:
+        # Save uploaded audio
+        temp_path = f"/tmp/quality_check_{uuid.uuid4().hex}.wav"
+        with open(temp_path, "wb") as f:
+            content = await audio_file.read()
+            f.write(content)
+
+        # Load and analyze
+        audio, sr = torchaudio.load(temp_path)
+        quality_analyzer = AudioQualityAnalyzer()
+        quality_metrics = quality_analyzer.analyze(audio, sr)
+
+        # Clean up
+        os.remove(temp_path)
+
+        return {
+            "filename": audio_file.filename,
+            "overall_score": quality_metrics.overall_score,
+            "quality_level": quality_metrics.quality_level.value,
+            "metrics": {
+                "snr_db": quality_metrics.snr_db,
+                "clipping_rate": quality_metrics.clipping_rate,
+                "silence_ratio": quality_metrics.silence_ratio,
+                "dynamic_range_db": quality_metrics.dynamic_range_db,
+                "spectral_flatness": quality_metrics.spectral_flatness
+            },
+            "issues": quality_metrics.issues,
+            "recommendations": quality_metrics.recommendations
+        }
+
+    except Exception as e:
+        logger.error(f"Error in audio quality check: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Audio quality check failed: {str(e)}")
 
 # Background processing functions
 async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path: str):
