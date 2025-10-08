@@ -18,6 +18,11 @@ from .spanish_regional import (
     process_spanish_text,
 )
 
+from .normalizer import (
+    SpanishTextNormalizer,
+    normalize_spanish_text,
+)
+
 __all__ = [
     "BaseTextChunker",
     "SentenceBasedChunker",
@@ -32,4 +37,7 @@ __all__ = [
     "RegionalSlang",
     "get_regional_processor",
     "process_spanish_text",
+    # Text normalization
+    "SpanishTextNormalizer",
+    "normalize_spanish_text",
 ]
