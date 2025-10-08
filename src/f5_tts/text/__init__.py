@@ -23,6 +23,16 @@ from .normalizer import (
     normalize_spanish_text,
 )
 
+from .prosody import (
+    ProsodyType,
+    IntensityLevel,
+    ProsodyMarker,
+    ProsodyAnalysis,
+    SpanishProsodyAnalyzer,
+    analyze_spanish_prosody,
+    format_prosody_report,
+)
+
 __all__ = [
     "BaseTextChunker",
     "SentenceBasedChunker",
@@ -40,4 +50,12 @@ __all__ = [
     # Text normalization
     "SpanishTextNormalizer",
     "normalize_spanish_text",
+    # Prosody analysis
+    "ProsodyType",
+    "IntensityLevel",
+    "ProsodyMarker",
+    "ProsodyAnalysis",
+    "SpanishProsodyAnalyzer",
+    "analyze_spanish_prosody",
+    "format_prosody_report",
 ]
