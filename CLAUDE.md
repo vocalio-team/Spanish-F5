@@ -37,10 +37,13 @@ pre-commit install
 # Run all tests (uses pytest)
 ./run_all_tests.sh
 
-# Run specific test suite
+# Run specific test suite (two options)
+pytest tests/test_spanish_regional.py -v
+# or
 python tests/test_spanish_regional.py
-python tests/test_text_chunker.py
-python tests/test_audio_processors.py
+
+# Run specific test within a file
+pytest tests/test_spanish_regional.py::TestSpanishRegionalProcessor::test_rioplatense_phonetics -v
 
 # Run with coverage
 pytest --cov=src/f5_tts --cov-report=html tests/
@@ -57,6 +60,8 @@ pre-commit run --all-files
 # Run manually
 ruff check . --fix
 ruff format .
+
+# Note: Ruff config is in ruff.toml (120 char line length, Python 3.10 target)
 ```
 
 ### Running the API
@@ -248,6 +253,11 @@ Key optimizations:
    - F5TTS class interface
    - Inference pipeline
    - File I/O operations
+
+**Test Coverage Tools:**
+- `pytest --cov`: Generate coverage reports
+- `analyze_coverage.py`: Detailed coverage analysis script
+- Coverage reports saved to `htmlcov/` directory
 
 **Note:** Some model components have linting exceptions for E722 to accommodate tensor notation.
 

@@ -26,9 +26,10 @@ def test_imports():
     assert hasattr(f5_tts_api, 'app')
 
     # Verify enhancement modules were imported
-    assert hasattr(f5_tts_api, 'SpanishTextNormalizer')
-    assert hasattr(f5_tts_api, 'SpanishProsodyAnalyzer')
-    assert hasattr(f5_tts_api, 'BreathPauseAnalyzer')
+    # Note: These are imported as functions, not classes
+    assert hasattr(f5_tts_api, 'normalize_spanish_text')
+    assert hasattr(f5_tts_api, 'analyze_spanish_prosody')
+    assert hasattr(f5_tts_api, 'analyze_breath_pauses')
     assert hasattr(f5_tts_api, 'AudioQualityAnalyzer')
     assert hasattr(f5_tts_api, 'get_adaptive_nfe_step')
     assert hasattr(f5_tts_api, 'get_adaptive_crossfade_duration')
