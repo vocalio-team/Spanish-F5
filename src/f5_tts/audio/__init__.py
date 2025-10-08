@@ -15,6 +15,13 @@ from .processors import (
     AudioClipping,
     AudioProcessingPipeline,
 )
+from .quality import (
+    QualityLevel,
+    QualityMetrics,
+    AudioQualityAnalyzer,
+    analyze_audio_quality,
+    print_quality_report,
+)
 
 __all__ = [
     "CrossfadeType",
@@ -28,4 +35,9 @@ __all__ = [
     "StereoToMono",
     "AudioClipping",
     "AudioProcessingPipeline",
+    "QualityLevel",
+    "QualityMetrics",
+    "AudioQualityAnalyzer",
+    "analyze_audio_quality",
+    "print_quality_report",
 ]
