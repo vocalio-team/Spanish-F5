@@ -175,3 +175,25 @@ cython_debug/
 *.pt
 *.ckpt
 .DS_Store
+
+# Temporary documentation files
+*_SUMMARY.md
+*_REPORT.md
+*_RESULTS.md
+SESSION_*.md
+PHASE_*.md
+
+# Keep important documentation
+!README.md
+!CLAUDE.md
+!ARCHITECTURE.md
+!PERFORMANCE_OPTIMIZATIONS.md
+!PROSODY_GUIDE.md
+!AUDIO_QUALITY_GUIDE.md
+!DOCUMENTATION_CLEANUP.md
+!docs/**/*.md
+
+# Archive directory (keep structure, not contents)
+archive/*
+!archive/session-reports/README.md
+!archive/legacy-docs/README.md
