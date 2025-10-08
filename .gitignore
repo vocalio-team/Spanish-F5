@@ -173,4 +173,6 @@ cython_debug/
 #.idea/
 
 *.safetensors
+*.pt
+*.ckpt
 .DS_Store
