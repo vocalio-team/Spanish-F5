@@ -77,6 +77,9 @@ docker build -t spanish-f5-tts .
 
 # Docker run
 docker run --gpus all -p 8000:8000 spanish-f5-tts
+
+# Note: The API has been refactored into a modular structure (see docs/API_REFACTORING.md)
+# The f5_tts_api.py entry point remains the same for backward compatibility
 ```
 
 ### CLI Tools
@@ -135,6 +138,19 @@ src/f5_tts/
 │   └── datasets/           # Dataset preparation scripts
 │       ├── prepare_spanish_regional.py  # Regional Spanish datasets
 │       └── ...
+│
+├── rest_api/                # REST API (MODULAR REFACTORED)
+│   ├── app.py              # FastAPI app creation & startup
+│   ├── config.py           # API configuration
+│   ├── state.py            # Global state management
+│   ├── models.py           # Pydantic request/response models
+│   ├── enhancements.py     # Enhancement processing
+│   ├── tts_processor.py    # TTS generation logic
+│   └── routes/             # API endpoint handlers
+│       ├── tts.py          # Main TTS endpoints
+│       ├── upload.py       # File upload endpoints
+│       ├── tasks.py        # Task management
+│       └── analysis.py     # Analysis endpoints
 │
 ├── api.py                   # F5TTS Python API class
 └── socket_server.py         # Streaming server (legacy)
@@ -254,6 +270,12 @@ Key optimizations:
    - Inference pipeline
    - File I/O operations
 
+6. **REST API Modules** (`test_api_modules.py`):
+   - Pydantic models validation
+   - State management (models, tasks, audio)
+   - TTS processor (short text adjustments)
+   - Enhancement processor (normalization, prosody, adaptive parameters)
+
 **Test Coverage Tools:**
 - `pytest --cov`: Generate coverage reports
 - `analyze_coverage.py`: Detailed coverage analysis script
@@ -305,7 +327,15 @@ See [docs/SPANISH_REGIONAL_GUIDE.md](docs/SPANISH_REGIONAL_GUIDE.md) for complet
 
 - **ARCHITECTURE.md**: Detailed modular architecture documentation
 - **SPANISH_REGIONAL_GUIDE.md**: Complete regional Spanish features guide
-- **f5_tts_api.py**: REST API server implementation
+- **API_REFACTORING.md**: REST API refactoring documentation (monolith → modular)
+- **f5_tts_api.py**: REST API server entry point (48 lines, modular)
+- **src/f5_tts/rest_api/**: Modular REST API implementation
+  - **app.py**: FastAPI application factory with model loading
+  - **models.py**: Pydantic request/response models
+  - **state.py**: Global state management (models, tasks, audio)
+  - **enhancements.py**: Text/audio enhancement processing
+  - **tts_processor.py**: TTS generation with adaptive parameters
+  - **routes/**: Organized endpoint handlers (tts, upload, tasks, analysis)
 - **src/f5_tts/api.py**: Main F5TTS Python API class
 - **src/f5_tts/infer/utils_infer.py**: Core inference utilities
 - **src/f5_tts/core/config.py**: Global configuration system
@@ -313,14 +343,21 @@ See [docs/SPANISH_REGIONAL_GUIDE.md](docs/SPANISH_REGIONAL_GUIDE.md) for complet
 
 ## Notes for Claude Code
 
-1. **Prefer modular imports**: Use new modular components from `f5_tts.core`, `f5_tts.audio`, `f5_tts.text` rather than legacy monolithic utilities when adding new features.
+1. **Prefer modular imports**: Use new modular components from `f5_tts.core`, `f5_tts.audio`, `f5_tts.text`, and `f5_tts.rest_api` rather than legacy monolithic utilities when adding new features.
 
-2. **Regional Spanish**: When working with Spanish text, consider regional processing. Check if auto-detection or explicit region handling is appropriate.
+2. **REST API development**: The API has been refactored into a modular structure. When adding new endpoints:
+   - Add route handlers in `src/f5_tts/rest_api/routes/`
+   - Add models in `src/f5_tts/rest_api/models.py`
+   - Reuse enhancement/processing logic from existing modules
+   - Add tests in `tests/test_api_modules.py`
+   - See `docs/API_REFACTORING.md` for detailed guidance
 
-3. **Performance-sensitive code**: Be aware of CUDA optimizations. Changes to inference pipeline should consider torch.compile compatibility and NFE step tuning.
+3. **Regional Spanish**: When working with Spanish text, consider regional processing. Check if auto-detection or explicit region handling is appropriate.
 
-4. **Testing**: Always add tests for new features. Regional Spanish tests are particularly important for linguistic accuracy.
+4. **Performance-sensitive code**: Be aware of CUDA optimizations. Changes to inference pipeline should consider torch.compile compatibility and NFE step tuning.
 
-5. **Backwards compatibility**: The original F5TTS API class is maintained for compatibility. New features should extend modular components.
+5. **Testing**: Always add tests for new features. Regional Spanish tests are particularly important for linguistic accuracy.
 
-6. **Docker deployment**: Code is deployed via Docker with multi-stage builds (development/production). Consider container implications for new dependencies.
+6. **Backwards compatibility**: The original F5TTS API class is maintained for compatibility. The REST API maintains 100% backward compatibility at the endpoint level.
+
+7. **Docker deployment**: Code is deployed via Docker with multi-stage builds (development/production). Consider container implications for new dependencies.
