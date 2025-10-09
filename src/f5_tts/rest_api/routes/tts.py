@@ -19,10 +19,35 @@ from ..state import api_state
 from ..config import DEFAULT_REF_AUDIO_PATH, TEMP_DIR
 from ..enhancements import enhancement_processor
 from ..tts_processor import tts_processor
+from ..audio_compression import audio_compressor
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/tts/formats")
+async def list_audio_formats():
+    """
+    List available audio compression formats.
+
+    Returns information about supported output formats including bitrates,
+    MIME types, and descriptions.
+
+    Returns:
+        Dictionary with available formats and their properties
+    """
+    formats = audio_compressor.list_formats()
+    return {
+        "formats": formats,
+        "default": "opus",
+        "recommendation": "Use 'opus' for lowest bandwidth (best for poor network coverage)",
+        "bandwidth_comparison": {
+            "opus_32k": "~4 KB/s (32kbps) - Excellent voice quality, minimal bandwidth",
+            "mp3_64k": "~8 KB/s (64kbps) - Good voice quality, moderate bandwidth",
+            "wav": "~48 KB/s - Uncompressed, maximum bandwidth"
+        }
+    }
 
 
 @router.post("/tts")
@@ -89,6 +114,20 @@ async def text_to_speech(request: TTSRequest):
         total_time = time.time() - start_time
         logger.info(f"Total enhanced TTS generation time: {total_time:.2f}s")
 
+        # Compress audio based on output format
+        if request.output_format and request.output_format.lower() != "wav":
+            compressed_path, mime_type, file_size = audio_compressor.compress(
+                output_path,
+                output_format=request.output_format.lower(),
+                bitrate=request.output_bitrate,
+                delete_source=True
+            )
+            output_path = compressed_path
+            output_filename = output_filename.rsplit('.', 1)[0] + '.' + audio_compressor.get_format_info(request.output_format.lower())['extension']
+            logger.info(f"Audio compressed to {request.output_format} ({file_size} bytes)")
+        else:
+            mime_type = "audio/wav"
+
         # Add enhancement metadata to response headers
         headers = {
             "Content-Disposition": f"attachment; filename={output_filename}",
@@ -96,7 +135,7 @@ async def text_to_speech(request: TTSRequest):
         }
 
         # Return the audio file directly
-        return FileResponse(output_path, media_type="audio/wav", filename=output_filename, headers=headers)
+        return FileResponse(output_path, media_type=mime_type, filename=output_filename, headers=headers)
 
     except HTTPException:
         raise
@@ -161,6 +200,20 @@ async def text_to_speech_stream(request: TTSRequest):
         # Run inference in executor to avoid blocking
         await asyncio.get_event_loop().run_in_executor(None, run_inference)
 
+        # Compress audio based on output format
+        if request.output_format and request.output_format.lower() != "wav":
+            compressed_path, mime_type, file_size = audio_compressor.compress(
+                output_path,
+                output_format=request.output_format.lower(),
+                bitrate=request.output_bitrate,
+                delete_source=True
+            )
+            output_path = compressed_path
+            output_filename = output_filename.rsplit('.', 1)[0] + '.' + audio_compressor.get_format_info(request.output_format.lower())['extension']
+            logger.info(f"Audio compressed to {request.output_format} ({file_size} bytes)")
+        else:
+            mime_type = "audio/wav"
+
         # Stream the audio file
         def iterfile():
             with open(output_path, mode="rb") as file_like:
@@ -174,7 +227,7 @@ async def text_to_speech_stream(request: TTSRequest):
                 pass
 
         return StreamingResponse(
-            iterfile(), media_type="audio/wav", headers={"Content-Disposition": f"inline; filename={output_filename}"}
+            iterfile(), media_type=mime_type, headers={"Content-Disposition": f"inline; filename={output_filename}"}
         )
 
     except HTTPException:

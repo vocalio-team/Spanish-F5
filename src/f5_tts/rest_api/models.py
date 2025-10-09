@@ -29,7 +29,13 @@ class TTSRequest(BaseModel):
     sway_sampling_coef: float = Field(default=-1.0, description="Sway sampling coefficient")
     seed: int = Field(default=-1, description="Random seed (-1 for random)")
     vocoder_name: str = Field(default="vocos", description="Vocoder to use")
-    output_format: str = Field(default="wav", description="Output audio format")
+    output_format: str = Field(
+        default="opus",
+        description="Output audio format: 'opus' (32kbps, best for low bandwidth), 'mp3' (64kbps), 'wav' (uncompressed)"
+    )
+    output_bitrate: Optional[str] = Field(
+        default=None, description="Custom bitrate for compressed formats (e.g., '32k', '64k'). If None, uses format default."
+    )
     use_fp16: bool = Field(default=True, description="Use FP16/BF16 for faster inference (recommended)")
 
     # Enhancement features (Phase 1-4 improvements)
@@ -60,7 +66,13 @@ class MultiStyleRequest(BaseModel):
     gen_text: str = Field(description="Text with voice markers like [main], [voice1], etc.")
     voices: Dict[str, Dict[str, str]] = Field(description="Voice configurations")
     remove_silence: bool = Field(default=True, description="Remove silence from output")
-    output_format: str = Field(default="wav", description="Output audio format")
+    output_format: str = Field(
+        default="opus",
+        description="Output audio format: 'opus' (32kbps, best for low bandwidth), 'mp3' (64kbps), 'wav' (uncompressed)"
+    )
+    output_bitrate: Optional[str] = Field(
+        default=None, description="Custom bitrate for compressed formats"
+    )
 
 
 class AnalysisRequest(BaseModel):

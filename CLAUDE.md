@@ -328,6 +328,7 @@ See [docs/SPANISH_REGIONAL_GUIDE.md](docs/SPANISH_REGIONAL_GUIDE.md) for complet
 - **ARCHITECTURE.md**: Detailed modular architecture documentation
 - **SPANISH_REGIONAL_GUIDE.md**: Complete regional Spanish features guide
 - **API_REFACTORING.md**: REST API refactoring documentation (monolith → modular)
+- **AUDIO_COMPRESSION.md**: Audio compression guide for low-bandwidth deployment
 - **f5_tts_api.py**: REST API server entry point (48 lines, modular)
 - **src/f5_tts/rest_api/**: Modular REST API implementation
   - **app.py**: FastAPI application factory with model loading
@@ -335,6 +336,7 @@ See [docs/SPANISH_REGIONAL_GUIDE.md](docs/SPANISH_REGIONAL_GUIDE.md) for complet
   - **state.py**: Global state management (models, tasks, audio)
   - **enhancements.py**: Text/audio enhancement processing
   - **tts_processor.py**: TTS generation with adaptive parameters
+  - **audio_compression.py**: Audio compression (OPUS, MP3, WAV) for bandwidth efficiency
   - **routes/**: Organized endpoint handlers (tts, upload, tasks, analysis)
 - **src/f5_tts/api.py**: Main F5TTS Python API class
 - **src/f5_tts/infer/utils_infer.py**: Core inference utilities
