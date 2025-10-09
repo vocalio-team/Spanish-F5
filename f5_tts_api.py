@@ -16,6 +16,7 @@ sys.path.append('src')
 # Use the F5TTS API class to avoid argparse conflicts
 from f5_tts.api import F5TTS
 import torchaudio
+import torch
 
 # Import enhancement modules
 from f5_tts.text import (
@@ -374,6 +375,27 @@ async def text_to_speech(
         output_filename = f"tts_{uuid.uuid4().hex}.wav"
         output_path = f"/tmp/{output_filename}"
 
+        # Adjust parameters for very short texts to prevent audio chopping
+        adjusted_speed = request.speed
+        fix_duration = None
+
+        # For very short texts (< 15 chars), slow down speech and pad text for better audio quality
+        text_length = len(processed_text)
+        if text_length < 15:
+            # Slow down speed for better clarity (e.g., "Comida" becomes more natural)
+            adjusted_speed = max(0.7, request.speed * 0.85)
+            # Pad short text with pauses to get minimum 2 seconds of actual speech
+            # Note: F5-TTS trims ref_audio from generated audio, so we need longer duration
+            # Reference audio is ~6 seconds, so fix_duration needs to be ref_duration + desired_output
+            fix_duration = 8.0  # 6s (ref) + 2s (desired output) = 8s total
+            logger.info(f"Short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, fix_duration={fix_duration}s")
+        elif text_length < 30:
+            # Slightly slower for short texts
+            adjusted_speed = max(0.85, request.speed * 0.95)
+            # Medium padding
+            fix_duration = 7.0  # 6s (ref) + 1s (desired output) = 7s total
+            logger.info(f"Medium-short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, fix_duration={fix_duration}s")
+
         # Process TTS synchronously
         def run_inference():
             inference_start = time.time()
@@ -384,16 +406,21 @@ async def text_to_speech(
                 gen_text=processed_text,  # Use enhanced text
                 target_rms=0.1,
                 cross_fade_duration=crossfade_duration,  # Use adaptive crossfade
-                speed=request.speed,
+                speed=adjusted_speed,  # Use adjusted speed for short texts
                 nfe_step=nfe_step,  # Use adaptive NFE
                 cfg_strength=request.cfg_strength,
-                sway_sampling_coef=request.sway_sampling_coef
+                sway_sampling_coef=request.sway_sampling_coef,
+                fix_duration=fix_duration  # Set minimum duration for short texts
             )
             inference_time = time.time() - inference_start
             logger.info(f"Enhanced TTS inference completed in {inference_time:.2f}s")
 
-            # Save to file
-            torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
+            # Save to file (convert numpy array to torch tensor if needed)
+            if isinstance(wav, torch.Tensor):
+                wav_tensor = wav
+            else:
+                wav_tensor = torch.from_numpy(wav)
+            torchaudio.save(output_path, wav_tensor.unsqueeze(0).cpu(), sr)
             return wav, sr, spect
 
         # Run inference in executor to avoid blocking
@@ -444,6 +471,20 @@ async def text_to_speech_stream(
         output_filename = f"tts_{uuid.uuid4().hex}.wav"
         output_path = f"/tmp/{output_filename}"
 
+        # Adjust parameters for very short texts to prevent audio chopping
+        adjusted_speed = request.speed
+        fix_duration = None
+        text_length = len(request.gen_text)
+
+        if text_length < 15:
+            adjusted_speed = max(0.7, request.speed * 0.85)
+            fix_duration = 8.0  # 6s (ref) + 2s (output)
+            logger.info(f"Short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, fix_duration={fix_duration}s")
+        elif text_length < 30:
+            adjusted_speed = max(0.85, request.speed * 0.95)
+            fix_duration = 7.0  # 6s (ref) + 1s (output)
+            logger.info(f"Medium-short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, fix_duration={fix_duration}s")
+
         # Process TTS synchronously
         def run_inference():
             wav, sr, spect = f5tts_instance.infer(
@@ -452,13 +493,18 @@ async def text_to_speech_stream(
                 gen_text=request.gen_text,
                 target_rms=0.1,
                 cross_fade_duration=request.cross_fade_duration,
-                speed=request.speed,
+                speed=adjusted_speed,
                 nfe_step=request.nfe_step,
                 cfg_strength=request.cfg_strength,
-                sway_sampling_coef=request.sway_sampling_coef
+                sway_sampling_coef=request.sway_sampling_coef,
+                fix_duration=fix_duration
             )
-            # Save to file
-            torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
+            # Save to file (convert numpy array to torch tensor if needed)
+            if isinstance(wav, torch.Tensor):
+                wav_tensor = wav
+            else:
+                wav_tensor = torch.from_numpy(wav)
+            torchaudio.save(output_path, wav_tensor.unsqueeze(0).cpu(), sr)
             return wav, sr, spect
 
         # Run inference in executor to avoid blocking
@@ -840,6 +886,20 @@ async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path:
         # Generate output path
         output_path = f"/tmp/output_{task_id}.wav"
 
+        # Adjust parameters for very short texts to prevent audio chopping
+        adjusted_speed = request.speed
+        fix_duration = None
+        text_length = len(request.gen_text)
+
+        if text_length < 15:
+            adjusted_speed = max(0.7, request.speed * 0.85)
+            fix_duration = 8.0  # 6s (ref) + 2s (output)
+            logger.info(f"Short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, fix_duration={fix_duration}s")
+        elif text_length < 30:
+            adjusted_speed = max(0.85, request.speed * 0.95)
+            fix_duration = 7.0  # 6s (ref) + 1s (output)
+            logger.info(f"Medium-short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, fix_duration={fix_duration}s")
+
         # Process TTS
         def run_inference():
             wav, sr, spect = f5tts_instance.infer(
@@ -848,13 +908,18 @@ async def process_tts_request(task_id: str, request: TTSRequest, ref_audio_path:
                 gen_text=request.gen_text,
                 target_rms=0.1,
                 cross_fade_duration=request.cross_fade_duration,
-                speed=request.speed,
+                speed=adjusted_speed,
                 nfe_step=request.nfe_step,
                 cfg_strength=request.cfg_strength,
-                sway_sampling_coef=request.sway_sampling_coef
+                sway_sampling_coef=request.sway_sampling_coef,
+                fix_duration=fix_duration
             )
-            # Save to file
-            torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
+            # Save to file (convert numpy array to torch tensor if needed)
+            if isinstance(wav, torch.Tensor):
+                wav_tensor = wav
+            else:
+                wav_tensor = torch.from_numpy(wav)
+            torchaudio.save(output_path, wav_tensor.unsqueeze(0).cpu(), sr)
             return wav, sr, spect
 
         # Run inference in executor
@@ -903,6 +968,20 @@ async def process_multi_style_request(
         f5tts_instance = models_cache[request.model]
         output_path = f"/tmp/multi_output_{task_id}.wav"
 
+        # Adjust parameters for very short texts to prevent audio chopping
+        adjusted_speed = 1.0
+        fix_duration = None
+        text_length = len(request.gen_text)
+
+        if text_length < 15:
+            adjusted_speed = 0.85
+            fix_duration = 8.0  # 6s (ref) + 2s (output)
+            logger.info(f"Short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, fix_duration={fix_duration}s")
+        elif text_length < 30:
+            adjusted_speed = 0.95
+            fix_duration = 7.0  # 6s (ref) + 1s (output)
+            logger.info(f"Medium-short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, fix_duration={fix_duration}s")
+
         # Process multi-style TTS (simplified implementation)
         # In a full implementation, you'd parse voice markers and switch voices
         def run_inference():
@@ -911,14 +990,19 @@ async def process_multi_style_request(
                 ref_text="",  # Auto-transcribe
                 gen_text=request.gen_text,
                 target_rms=0.1,
-                speed=1.0,
+                speed=adjusted_speed,
                 nfe_step=32,
                 cfg_strength=2.0,
                 sway_sampling_coef=-1.0,
-                remove_silence=request.remove_silence
+                remove_silence=request.remove_silence,
+                fix_duration=fix_duration
             )
-            # Save to file
-            torchaudio.save(output_path, wav.unsqueeze(0).cpu(), sr)
+            # Save to file (convert numpy array to torch tensor if needed)
+            if isinstance(wav, torch.Tensor):
+                wav_tensor = wav
+            else:
+                wav_tensor = torch.from_numpy(wav)
+            torchaudio.save(output_path, wav_tensor.unsqueeze(0).cpu(), sr)
             return wav, sr, spect
 
         await asyncio.get_event_loop().run_in_executor(None, run_inference)
