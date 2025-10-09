@@ -40,6 +40,21 @@ class ProsodicPattern:
     description: str = ""
 
 
+@dataclass
+class RegionalProsodicProfile:
+    """Complete prosodic profile for a regional variant based on empirical data."""
+    pace: str  # "slow", "medium", "fast"
+    pace_multiplier: float  # Speech rate multiplier (1.0 = normal, 0.75 = 25% slower)
+    reading_pace_multiplier: float  # Reading/formal speech multiplier
+    stress_pattern: str  # "standard", "double_accent", "syllable_timed"
+    intonation_quality: str  # "neutral", "plaintive", "staccato", "melodic"
+    f0_range_female: Tuple[int, int]  # (min_hz, max_hz) for female voices
+    f0_range_male: Tuple[int, int]  # (min_hz, max_hz) for male voices
+    rhythmic_pattern: str  # "stress_timed", "syllable_timed", "mixed"
+    emotional_coloring: str  # "neutral", "expressive", "reserved"
+    description: str = ""
+
+
 class RegionalPhonetics:
     """Regional phonetic transformations for Spanish variants."""
 
@@ -129,9 +144,54 @@ class RegionalPhonetics:
 
 
 class RegionalProsody:
-    """Regional prosodic patterns for Spanish variants."""
+    """Regional prosodic patterns for Spanish variants.
 
-    # Prosodic markers for intonation
+    Based on empirical research:
+    - Cuello & Oro Ozán (2024): Rioplatense prosody measurements
+    - Guglielmone et al. (2014): Discourse-level intonation patterns
+    """
+
+    # Complete prosodic profiles based on academic research
+    RIOPLATENSE_PROFILE = RegionalProsodicProfile(
+        pace="slow",  # ✓ CORRECTED: Empirical data shows 0.75x slower, not fast
+        pace_multiplier=0.75,  # 25% slower than standard (Cuello & Oro Ozán, 2024)
+        reading_pace_multiplier=0.60,  # 40% slower for reading/formal speech
+        stress_pattern="double_accent",  # Rhythmic + lexical stress simultaneously
+        intonation_quality="plaintive",  # "Tono quejumbroso" (whining/plaintive)
+        f0_range_female=(75, 340),  # Empirical range from Guglielmone et al. (2014)
+        f0_range_male=(75, 200),  # Empirical range from Guglielmone et al. (2014)
+        rhythmic_pattern="mixed",  # Combines stress-timing with syllable elements
+        emotional_coloring="expressive",  # Italian influence, wide F0 range
+        description="Rioplatense 'tonada nortina' - slower pace, double accentuation, plaintive quality"
+    )
+
+    COLOMBIAN_PROFILE = RegionalProsodicProfile(
+        pace="medium",
+        pace_multiplier=1.0,  # Standard pace
+        reading_pace_multiplier=0.95,  # Slightly slower when reading
+        stress_pattern="standard",  # Clear lexical stress
+        intonation_quality="neutral",  # Clear, neutral articulation
+        f0_range_female=(80, 300),  # Estimated range
+        f0_range_male=(80, 180),  # Estimated range
+        rhythmic_pattern="syllable_timed",  # More syllable-timed rhythm
+        emotional_coloring="neutral",  # Clear, standard prosody
+        description="Colombian prosody - clear articulation, standard rhythm"
+    )
+
+    MEXICAN_PROFILE = RegionalProsodicProfile(
+        pace="medium",
+        pace_multiplier=1.0,  # Standard pace
+        reading_pace_multiplier=0.95,
+        stress_pattern="standard",
+        intonation_quality="melodic",  # Distinctive melodic contours
+        f0_range_female=(85, 320),  # Estimated range
+        f0_range_male=(85, 190),  # Estimated range
+        rhythmic_pattern="stress_timed",  # Stress-timed rhythm
+        emotional_coloring="expressive",  # Expressive intonation
+        description="Mexican prosody - melodic contours, diminutive softening"
+    )
+
+    # Prosodic markers for intonation (discourse-level)
     RIOPLATENSE_PROSODY = [
         ProsodicPattern(
             pattern_type="intonation",
@@ -141,7 +201,12 @@ class RegionalProsody:
         ProsodicPattern(
             pattern_type="stress",
             markers=["vos", "tenés", "querés", "podés"],
-            description="Voseo stress patterns"
+            description="Voseo stress patterns (final syllable stress)"
+        ),
+        ProsodicPattern(
+            pattern_type="rhythm",
+            markers=["che", "boludo", "tipo"],
+            description="Double accentuation: rhythmic + lexical"
         ),
     ]
 
@@ -181,6 +246,16 @@ class RegionalProsody:
             SpanishRegion.NEUTRAL: [],
         }
         return mapping.get(region, [])
+
+    @classmethod
+    def get_profile(cls, region: SpanishRegion) -> Optional[RegionalProsodicProfile]:
+        """Get complete prosodic profile for a specific region."""
+        mapping = {
+            SpanishRegion.RIOPLATENSE: cls.RIOPLATENSE_PROFILE,
+            SpanishRegion.COLOMBIAN: cls.COLOMBIAN_PROFILE,
+            SpanishRegion.MEXICAN: cls.MEXICAN_PROFILE,
+        }
+        return mapping.get(region, None)
 
 
 class RegionalSlang:
@@ -306,6 +381,7 @@ class SpanishRegionalProcessor:
         self.auto_detect = auto_detect
         self.phonetic_features = RegionalPhonetics.get_features(region)
         self.prosodic_patterns = RegionalProsody.get_patterns(region)
+        self.prosodic_profile = RegionalProsody.get_profile(region)
         self.slang_dict = RegionalSlang.get_slang_dict(region)
 
     def normalize_text(self, text: str) -> str:
@@ -320,6 +396,7 @@ class SpanishRegionalProcessor:
                 self.region = detected
                 self.phonetic_features = RegionalPhonetics.get_features(detected)
                 self.prosodic_patterns = RegionalProsody.get_patterns(detected)
+                self.prosodic_profile = RegionalProsody.get_profile(detected)
                 self.slang_dict = RegionalSlang.get_slang_dict(detected)
 
         # Normalize common contractions and regional variations
@@ -383,7 +460,8 @@ class SpanishRegionalProcessor:
         # Step 3: Extract prosodic markers
         final_text, prosodic_hints = self.add_prosodic_markers(phonetic)
 
-        return {
+        # Build metadata dictionary
+        result = {
             "original": text,
             "normalized": normalized,
             "phonetic": phonetic,
@@ -392,6 +470,22 @@ class SpanishRegionalProcessor:
             "prosodic_hints": prosodic_hints,
             "detected_slang": self._detect_slang_in_text(text),
         }
+
+        # Add prosodic profile information if available
+        if self.prosodic_profile:
+            result["prosodic_profile"] = {
+                "pace": self.prosodic_profile.pace,
+                "pace_multiplier": self.prosodic_profile.pace_multiplier,
+                "reading_pace_multiplier": self.prosodic_profile.reading_pace_multiplier,
+                "stress_pattern": self.prosodic_profile.stress_pattern,
+                "intonation_quality": self.prosodic_profile.intonation_quality,
+                "f0_range_female": self.prosodic_profile.f0_range_female,
+                "f0_range_male": self.prosodic_profile.f0_range_male,
+                "rhythmic_pattern": self.prosodic_profile.rhythmic_pattern,
+                "emotional_coloring": self.prosodic_profile.emotional_coloring,
+            }
+
+        return result
 
     def _detect_slang_in_text(self, text: str) -> List[Dict[str, str]]:
         """Detect slang terms present in text."""

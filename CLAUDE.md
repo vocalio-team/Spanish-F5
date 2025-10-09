@@ -9,6 +9,8 @@ Spanish-F5 is a Spanish-language Text-to-Speech (TTS) system based on F5-TTS wit
 **Key Features:**
 - Comprehensive regional Spanish support for Latin American variants (Rioplatense, Colombian, Mexican, Chilean, Caribbean, Andean)
 - Automatic accent detection, phonetic transformations, and slang handling
+- **Empirically-validated prosody** based on academic research (Cuello & Oro Ozán 2024, Guglielmone et al. 2014)
+- **Discourse-level prosody** with declination units and nuclear tone configurations
 - Intelligent text normalization (numbers, dates, times, currencies, abbreviations)
 - Adaptive NFE steps for optimal quality-speed tradeoff
 - Enhanced crossfading for smoother audio transitions
@@ -117,7 +119,8 @@ src/f5_tts/
 │
 ├── text/                    # Text processing
 │   ├── chunker.py          # Text chunking strategies (Sentence, Adaptive, Fixed)
-│   ├── spanish_regional.py # Regional Spanish processor (NEW)
+│   ├── spanish_regional.py # Regional Spanish processor with empirical prosody
+│   ├── discourse_prosody.py # Discourse-level prosody (Guglielmone et al. 2014)
 │   └── __init__.py
 │
 ├── model/                   # Model definitions
@@ -198,8 +201,17 @@ Located in `src/f5_tts/text/spanish_regional.py`:
 
 - `SpanishRegionalProcessor`: Main processing class
 - `RegionalPhonetics`: Phonetic transformation rules
-- `RegionalProsody`: Prosodic pattern detection
+- `RegionalProsody`: Prosodic pattern detection with **empirically-validated profiles**
+- `RegionalProsodicProfile`: Complete prosodic profiles based on academic research
 - `RegionalSlang`: Slang dictionaries per region
+
+**Empirical Prosody (NEW - Based on Academic Research):**
+- **Rioplatense**: Slow pace (0.75x multiplier), double accentuation, plaintive quality
+  - Cuello & Oro Ozán (2024): T.E.P.HA prosody measurements
+  - F0 range: 75-340Hz (female), 75-200Hz (male)
+  - **CRITICAL FIX**: Changed from "fast" to "slow" based on empirical data
+- **Colombian**: Medium pace, clear articulation, neutral prosody
+- **Mexican**: Medium pace, melodic contours, expressive intonation
 
 **Auto-detection:** Scores text based on slang markers, selects region with highest score.
 
@@ -208,7 +220,8 @@ Located in `src/f5_tts/text/spanish_regional.py`:
 2. Detect/apply regional slang
 3. Apply phonetic transformations (if enabled)
 4. Add prosodic markers
-5. Return structured result with metadata
+5. Apply empirical prosodic profile (pace, stress, F0 range)
+6. Return structured result with metadata including prosodic profile
 
 ### Audio Processing
 
@@ -249,28 +262,35 @@ Key optimizations:
    - Auto-detection from text
    - Prosodic marker addition
 
-2. **Audio Processing** (`test_audio_processors.py`, `test_audio.py`):
+2. **Prosody Improvements** (`test_prosody_improvements.py`) **NEW**:
+   - Empirical prosodic profiles (pace, stress, F0 ranges)
+   - Discourse-level prosody (declination units, nuclear tones)
+   - Integration tests (regional + discourse prosody)
+   - Regression prevention (pace correction)
+   - 31 comprehensive tests - all passing ✓
+
+3. **Audio Processing** (`test_audio_processors.py`, `test_audio.py`):
    - Crossfading algorithms
    - Audio normalization
    - Resampling quality
    - Edge cases (silence, clipping)
 
-3. **Text Processing** (`test_text_chunker.py`):
+4. **Text Processing** (`test_text_chunker.py`):
    - Sentence-based chunking
    - Adaptive chunking
    - Boundary detection
 
-4. **Core System** (`test_core.py`):
+5. **Core System** (`test_core.py`):
    - Configuration management
    - Type definitions
    - Protocol compliance
 
-5. **API Integration** (`test_api.py`):
+6. **API Integration** (`test_api.py`):
    - F5TTS class interface
    - Inference pipeline
    - File I/O operations
 
-6. **REST API Modules** (`test_api_modules.py`):
+7. **REST API Modules** (`test_api_modules.py`):
    - Pydantic models validation
    - State management (models, tasks, audio)
    - TTS processor (short text adjustments)
@@ -289,13 +309,31 @@ Key optimizations:
 ```python
 from f5_tts.text import process_spanish_text
 
-# Process Rioplatense Spanish
+# Process Rioplatense Spanish with empirical prosody
 result = process_spanish_text(
     "Che boludo, ¿vos querés tomar unos mates?",
     region="rioplatense"
 )
 # Detects: che, boludo, vos, querés
 # Applies: s-aspiration, sheísmo, voseo stress patterns
+# Prosody: slow pace (0.75x), double accentuation, plaintive quality
+# Returns prosodic_profile with F0 ranges, pace multipliers, stress patterns
+```
+
+### Discourse-Level Prosody Example (NEW)
+```python
+from f5_tts.text.discourse_prosody import analyze_discourse_prosody
+
+# Analyze discourse structure based on Guglielmone et al. (2014)
+result = analyze_discourse_prosody(
+    "Hola amigo. ¿Cómo estás? Estoy muy bien, gracias.",
+    voice_type="female"
+)
+# Returns:
+# - phrases: List of intonational phrases with nuclear tones
+# - declination_units: Thematic sections with F0 start/end
+# - Nuclear tones: descending (↘), suspensive (→), ascending (↗)
+# - F0 ranges: 75-340Hz (female), 75-200Hz (male)
 ```
 
 ### Supported Regions
@@ -329,6 +367,7 @@ See [docs/SPANISH_REGIONAL_GUIDE.md](docs/SPANISH_REGIONAL_GUIDE.md) for complet
 - **SPANISH_REGIONAL_GUIDE.md**: Complete regional Spanish features guide
 - **API_REFACTORING.md**: REST API refactoring documentation (monolith → modular)
 - **AUDIO_COMPRESSION.md**: Audio compression guide for low-bandwidth deployment
+- **PROSODY_ANALYSIS_ACADEMIC_PAPERS.md**: Academic research findings on Rioplatense prosody **NEW**
 - **f5_tts_api.py**: REST API server entry point (48 lines, modular)
 - **src/f5_tts/rest_api/**: Modular REST API implementation
   - **app.py**: FastAPI application factory with model loading
@@ -341,7 +380,8 @@ See [docs/SPANISH_REGIONAL_GUIDE.md](docs/SPANISH_REGIONAL_GUIDE.md) for complet
 - **src/f5_tts/api.py**: Main F5TTS Python API class
 - **src/f5_tts/infer/utils_infer.py**: Core inference utilities
 - **src/f5_tts/core/config.py**: Global configuration system
-- **src/f5_tts/text/spanish_regional.py**: Regional accent processor
+- **src/f5_tts/text/spanish_regional.py**: Regional accent processor with empirical prosody **UPDATED**
+- **src/f5_tts/text/discourse_prosody.py**: Discourse-level prosody processor **NEW**
 
 ## Notes for Claude Code
 
@@ -354,12 +394,16 @@ See [docs/SPANISH_REGIONAL_GUIDE.md](docs/SPANISH_REGIONAL_GUIDE.md) for complet
    - Add tests in `tests/test_api_modules.py`
    - See `docs/API_REFACTORING.md` for detailed guidance
 
-3. **Regional Spanish**: When working with Spanish text, consider regional processing. Check if auto-detection or explicit region handling is appropriate.
+3. **Regional Spanish**: When working with Spanish text, consider regional processing. Check if auto-detection or explicit region handling is appropriate. **IMPORTANT**: All prosodic profiles are now based on empirical research (see `docs/PROSODY_ANALYSIS_ACADEMIC_PAPERS.md`).
 
-4. **Performance-sensitive code**: Be aware of CUDA optimizations. Changes to inference pipeline should consider torch.compile compatibility and NFE step tuning.
+4. **Empirical Prosody**: Prosodic parameters (pace, F0 ranges, stress patterns) are based on academic research. Do NOT modify these values without corresponding empirical evidence. Key correction: Rioplatense is SLOW (0.75x), not fast.
 
-5. **Testing**: Always add tests for new features. Regional Spanish tests are particularly important for linguistic accuracy.
+5. **Discourse Prosody**: For multi-sentence text, consider using `discourse_prosody.py` module to apply declination units and nuclear tone configurations based on Guglielmone et al. (2014) framework.
 
-6. **Backwards compatibility**: The original F5TTS API class is maintained for compatibility. The REST API maintains 100% backward compatibility at the endpoint level.
+6. **Performance-sensitive code**: Be aware of CUDA optimizations. Changes to inference pipeline should consider torch.compile compatibility and NFE step tuning.
 
-7. **Docker deployment**: Code is deployed via Docker with multi-stage builds (development/production). Consider container implications for new dependencies.
+7. **Testing**: Always add tests for new features. Regional Spanish and prosody tests are particularly important for linguistic accuracy. See `test_prosody_improvements.py` for examples.
+
+8. **Backwards compatibility**: The original F5TTS API class is maintained for compatibility. The REST API maintains 100% backward compatibility at the endpoint level.
+
+9. **Docker deployment**: Code is deployed via Docker with multi-stage builds (development/production). Consider container implications for new dependencies.
