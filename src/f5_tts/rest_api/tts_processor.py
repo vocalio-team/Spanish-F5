@@ -27,6 +27,10 @@ class TTSProcessor:
 
         Short texts need special handling to prevent audio chopping.
 
+        CRITICAL: F5-TTS removes ref_audio_len from the beginning of generated audio.
+        For a 6s reference, fix_duration=12s yields ~6s of actual output.
+        With silence removal and crossfading, this becomes ~3-4s.
+
         Args:
             text: Input text
             base_speed: Base speed multiplier
@@ -37,26 +41,29 @@ class TTSProcessor:
         text_length = len(text)
 
         if text_length < 15:
-            # Slow down speed for better clarity (e.g., "Comida" becomes more natural)
-            adjusted_speed = max(0.7, base_speed * 0.85)
-            # Pad short text with pauses to get minimum 2 seconds of actual speech
-            # Note: F5-TTS trims ref_audio from generated audio, so we need longer duration
-            # Reference audio is ~6 seconds, so fix_duration needs to be ref_duration + desired_output
-            fix_duration = 8.0  # 6s (ref) + 2s (desired output) = 8s total
+            # Very short text (1-2 words): needs aggressive padding
+            # Slow down significantly for clarity
+            adjusted_speed = max(0.6, base_speed * 0.75)
+            # Generate much longer audio to compensate for:
+            # 1. ref_audio removal (~6s lost)
+            # 2. silence removal at edges (~1-2s lost)
+            # 3. crossfading overlap (~0.15s lost per chunk)
+            # Target: 3-4s of final audible speech
+            fix_duration = 12.0  # 12s total - 6s (ref) - 2s (silence) = 4s output
             logger.info(
-                f"Short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, "
-                f"fix_duration={fix_duration}s"
+                f"Very short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, "
+                f"fix_duration={fix_duration}s (target: ~4s output)"
             )
             return adjusted_speed, fix_duration
 
         elif text_length < 30:
-            # Slightly slower for short texts
-            adjusted_speed = max(0.85, base_speed * 0.95)
-            # Medium padding
-            fix_duration = 7.0  # 6s (ref) + 1s (desired output) = 7s total
+            # Short text: moderate padding
+            adjusted_speed = max(0.75, base_speed * 0.90)
+            # Less aggressive padding needed
+            fix_duration = 9.0  # 9s total - 6s (ref) - 1s (silence) = 2s output
             logger.info(
-                f"Medium-short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, "
-                f"fix_duration={fix_duration}s"
+                f"Short text detected ({text_length} chars): adjusted_speed={adjusted_speed:.2f}, "
+                f"fix_duration={fix_duration}s (target: ~2s output)"
             )
             return adjusted_speed, fix_duration
 

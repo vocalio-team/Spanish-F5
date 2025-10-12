@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 def test_imports():
-    """Test that all enhancement modules can be imported."""
-    # Import the API module
+    """Test that all enhancement modules can be imported from modular API."""
+    # Import the modular API
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "f5_tts_api",
@@ -25,27 +25,24 @@ def test_imports():
     # Verify the app exists
     assert hasattr(f5_tts_api, 'app')
 
-    # Verify enhancement modules were imported
-    # Note: These are imported as functions, not classes
-    assert hasattr(f5_tts_api, 'normalize_spanish_text')
-    assert hasattr(f5_tts_api, 'analyze_spanish_prosody')
-    assert hasattr(f5_tts_api, 'analyze_breath_pauses')
-    assert hasattr(f5_tts_api, 'AudioQualityAnalyzer')
-    assert hasattr(f5_tts_api, 'get_adaptive_nfe_step')
-    assert hasattr(f5_tts_api, 'get_adaptive_crossfade_duration')
+    # Verify enhancement modules can be imported from their modular locations
+    from f5_tts.text import normalize_spanish_text, analyze_spanish_prosody, analyze_breath_pauses
+    from f5_tts.audio import AudioQualityAnalyzer
+    from f5_tts.core import get_adaptive_nfe_step, get_adaptive_crossfade_duration
+
+    # Verify they're callable
+    assert callable(normalize_spanish_text)
+    assert callable(analyze_spanish_prosody)
+    assert callable(analyze_breath_pauses)
+    assert callable(get_adaptive_nfe_step)
+    assert callable(get_adaptive_crossfade_duration)
+    assert AudioQualityAnalyzer is not None
 
 
 def test_request_models():
     """Test that request models have enhancement fields."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "f5_tts_api",
-        Path(__file__).parent.parent / "f5_tts_api.py"
-    )
-    f5_tts_api = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(f5_tts_api)
-
-    TTSRequest = f5_tts_api.TTSRequest
+    # Import from the modular API structure
+    from f5_tts.rest_api.models import TTSRequest
 
     # Create a request with enhancement fields
     request = TTSRequest(
@@ -70,15 +67,8 @@ def test_request_models():
 
 def test_analysis_request():
     """Test AnalysisRequest model."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "f5_tts_api",
-        Path(__file__).parent.parent / "f5_tts_api.py"
-    )
-    f5_tts_api = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(f5_tts_api)
-
-    AnalysisRequest = f5_tts_api.AnalysisRequest
+    # Import from the modular API structure
+    from f5_tts.rest_api.models import AnalysisRequest
 
     request = AnalysisRequest(
         text="¿Tienes 25 euros?",

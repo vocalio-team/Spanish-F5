@@ -81,7 +81,7 @@ class EnhancementProcessor:
 
         # 6. Adaptive crossfade duration
         if request.adaptive_crossfade:
-            crossfade_duration = self._get_adaptive_crossfade(request.cross_fade_duration)
+            crossfade_duration = self._get_adaptive_crossfade(request.cross_fade_duration, processed_text)
             enhancement_metadata["crossfade_duration_used"] = crossfade_duration
 
         logger.info(
@@ -219,21 +219,44 @@ class EnhancementProcessor:
             logger.warning(f"Adaptive NFE failed: {e}")
             return default_nfe
 
-    def _get_adaptive_crossfade(self, default_duration: float) -> float:
+    def _get_adaptive_crossfade(self, default_duration: float, text: str) -> float:
         """
-        Calculate adaptive crossfade duration.
+        Calculate adaptive crossfade duration based on text length.
+
+        For very short texts, use shorter crossfade to preserve more audio.
 
         Args:
             default_duration: Default crossfade duration
+            text: Input text
 
         Returns:
             Adaptive crossfade duration
         """
         try:
-            # Use default adaptive crossfade (will be refined per chunk in actual processing)
+            text_length = len(text)
+
+            # For very short texts, use much shorter crossfade to avoid chopping
+            if text_length < 15:
+                # Very short: minimal crossfade (50ms)
+                duration = 0.05
+                logger.info(
+                    f"Very short text ({text_length} chars): reducing crossfade "
+                    f"{default_duration:.2f}s -> {duration:.2f}s"
+                )
+                return duration
+            elif text_length < 30:
+                # Short: reduced crossfade (80ms)
+                duration = 0.08
+                logger.info(
+                    f"Short text ({text_length} chars): reducing crossfade "
+                    f"{default_duration:.2f}s -> {duration:.2f}s"
+                )
+                return duration
+
+            # For normal/long texts, use adaptive crossfade
             duration = get_adaptive_crossfade_duration()
             if duration != default_duration:
-                logger.info(f"Adaptive crossfade: {default_duration} -> {duration}")
+                logger.info(f"Adaptive crossfade: {default_duration:.2f}s -> {duration:.2f}s")
             return duration
         except Exception as e:
             logger.warning(f"Adaptive crossfade failed: {e}")

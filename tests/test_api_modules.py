@@ -179,7 +179,7 @@ class TestTTSProcessor:
         adjusted_speed, fix_duration = processor.calculate_short_text_adjustments("Hola", 1.0)
 
         assert adjusted_speed < 1.0
-        assert fix_duration == 8.0
+        assert fix_duration == 12.0  # Updated: increased to prevent audio chopping
 
     def test_short_text_adjustments_medium(self):
         """Test adjustments for medium-short text."""
@@ -188,7 +188,7 @@ class TestTTSProcessor:
         adjusted_speed, fix_duration = processor.calculate_short_text_adjustments("Hola mundo, ¿cómo estás?", 1.0)
 
         assert adjusted_speed < 1.0
-        assert fix_duration == 7.0
+        assert fix_duration == 9.0  # Updated: increased to prevent audio chopping
 
     def test_normal_text_no_adjustments(self):
         """Test no adjustments for normal length text."""
@@ -263,10 +263,11 @@ class TestEnhancementProcessor:
         assert result > 0
 
     def test_adaptive_crossfade_default(self):
-        """Test adaptive crossfade with default fallback."""
+        """Test adaptive crossfade with default fallback (requires text parameter now)."""
         processor = EnhancementProcessor()
 
-        result = processor._get_adaptive_crossfade(0.8)
+        # Test with normal-length text
+        result = processor._get_adaptive_crossfade(0.8, "This is a normal length text for testing")
 
         assert isinstance(result, float)
         assert result > 0
