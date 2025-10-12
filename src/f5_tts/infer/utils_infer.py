@@ -89,7 +89,16 @@ def chunk_text(text, max_chars=135):
 # load vocoder
 def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=device):
     if vocoder_name == "vocos":
-        if is_local:
+        # Check for pre-downloaded vocos model in Docker image
+        import os
+        vocos_model_path = os.environ.get('VOCOS_MODEL_PATH', '/app/vocos_model')
+        if os.path.exists(vocos_model_path) and os.path.exists(f"{vocos_model_path}/config.yaml"):
+            print(f"✓ Load vocos from bundled model: {vocos_model_path}")
+            vocoder = Vocos.from_hparams(f"{vocos_model_path}/config.yaml")
+            state_dict = torch.load(f"{vocos_model_path}/pytorch_model.bin", map_location="cpu")
+            vocoder.load_state_dict(state_dict)
+            vocoder = vocoder.eval().to(device)
+        elif is_local:
             print(f"Load vocos from local path {local_path}")
             vocoder = Vocos.from_hparams(f"{local_path}/config.yaml")
             state_dict = torch.load(f"{local_path}/pytorch_model.bin", map_location="cpu")
@@ -125,12 +134,26 @@ def initialize_asr_pipeline(device=device, dtype=None):
             torch.float16 if device == "cuda" and torch.cuda.get_device_properties(device).major >= 6 else torch.float32
         )
     global asr_pipe
-    asr_pipe = pipeline(
-        "automatic-speech-recognition",
-        model="openai/whisper-large-v3-turbo",
-        torch_dtype=dtype,
-        device=device,
-    )
+
+    # Check for bundled Whisper model
+    import os
+    whisper_model_path = os.environ.get('WHISPER_MODEL_PATH', '/app/whisper_model')
+    if os.path.exists(whisper_model_path) and os.path.exists(f"{whisper_model_path}/config.json"):
+        print(f"✓ Load Whisper ASR from bundled model: {whisper_model_path}")
+        asr_pipe = pipeline(
+            "automatic-speech-recognition",
+            model=whisper_model_path,
+            torch_dtype=dtype,
+            device=device,
+        )
+    else:
+        print(f"Whisper model not found at {whisper_model_path}, downloading from HuggingFace...")
+        asr_pipe = pipeline(
+            "automatic-speech-recognition",
+            model="openai/whisper-large-v3-turbo",
+            torch_dtype=dtype,
+            device=device,
+        )
 
 
 # load model checkpoint for inference

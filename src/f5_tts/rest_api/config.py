@@ -14,7 +14,7 @@ TORCH_MATMUL_PRECISION = os.getenv("TORCH_MATMUL_PRECISION", "high")  # "high" o
 
 # Model paths
 DEFAULT_F5TTS_MODEL_PATH = os.getenv(
-    "F5TTS_MODEL_PATH", "/app/models/Spanish/model_1200000.safetensors"
+    "F5TTS_MODEL_PATH", "/app/models/Spanish/model_1250000.safetensors"
 )
 DEFAULT_F5TTS_VOCAB_PATH = os.getenv("F5TTS_VOCAB_PATH", "/app/models/Spanish/vocab.txt")
 DEFAULT_E2TTS_MODEL_PATH = os.getenv(
@@ -23,6 +23,7 @@ DEFAULT_E2TTS_MODEL_PATH = os.getenv(
 
 # Reference audio
 DEFAULT_REF_AUDIO_PATH = os.getenv("DEFAULT_REF_AUDIO_PATH", "ref_audio/short.wav")
+DEFAULT_REF_TEXT = os.getenv("DEFAULT_REF_TEXT", "Hola, buenos días")
 
 # Temporary file storage
 TEMP_DIR = os.getenv("TEMP_DIR", "/tmp")

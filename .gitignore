@@ -7,6 +7,10 @@ wandb/
 results/
 certificate.pem
 
+# Downloaded models (too large for git)
+vocos_model/
+whisper_model/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

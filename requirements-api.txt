@@ -1,0 +1,41 @@
+# Minimal requirements for F5-TTS API (production)
+# Core ML libraries
+torch>=2.7.0
+torchaudio>=2.7.0
+accelerate>=0.33.0
+transformers>=4.35.0
+datasets>=2.14.0
+
+# F5-TTS specific
+safetensors
+vocos
+ema-pytorch>=0.5.2
+x-transformers>=2.3.5
+torchdiffeq
+matplotlib
+jieba
+pypinyin
+wandb
+
+# Audio processing
+librosa==0.10.1
+soundfile==0.12.1
+pydub
+
+# API framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+gunicorn==21.2.0
+python-multipart>=0.0.6
+
+# Utilities
+numpy<=1.26.4
+tqdm>=4.65.0
+cached_path
+click
+pydantic==2.5.0
+num2words==0.5.13
+tomli
+
+# AWS for model download (use boto3 directly to avoid dependency conflicts)
+boto3>=1.34.0

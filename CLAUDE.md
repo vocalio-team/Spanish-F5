@@ -84,6 +84,34 @@ docker run --gpus all -p 8000:8000 spanish-f5-tts
 # The f5_tts_api.py entry point remains the same for backward compatibility
 ```
 
+### Production Deployment
+
+```bash
+# Deploy to AWS ECS with GPU Spot instances
+./deploy-gpu-spot.sh
+
+# What gets deployed:
+# - CloudFormation stack with g5.xlarge/g4dn.xlarge Spot instances (2 instances)
+# - Application Load Balancer with health checks
+# - ECS Capacity Provider for auto-scaling
+# - Cost: ~$0.15-0.25/hour (~$110-180/month) - 60-70% savings vs On-Demand
+# - Stack name: gpu-spot-stack
+# - Cluster: dev-vocalio-chatterbox
+# - Service: f5-tts-spot-service
+
+# Monitor deployment
+aws ecs describe-services \
+  --cluster dev-vocalio-chatterbox \
+  --services f5-tts-spot-service \
+  --region us-east-1
+
+# View logs
+aws logs tail /ecs/dev-f5-tts --follow --region us-east-1
+
+# Check backend integration
+# Backend: https://api.test.aithentia.com:8000/workers
+```
+
 ### CLI Tools
 ```bash
 # Gradio web interface

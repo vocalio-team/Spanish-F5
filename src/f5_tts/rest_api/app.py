@@ -21,6 +21,7 @@ from .config import (
     DEFAULT_F5TTS_MODEL_PATH,
     DEFAULT_F5TTS_VOCAB_PATH,
     DEFAULT_REF_AUDIO_PATH,
+    DEFAULT_REF_TEXT,
 )
 from .state import api_state
 from .routes import create_router
@@ -152,20 +153,9 @@ async def load_models():
         )
         api_state.add_model("F5-TTS", f5tts)
 
-        # Warmup inference to optimize CUDA kernels
-        logger.info("Running warmup inference to optimize CUDA kernels...")
-        try:
-            warmup_wav, _, _ = f5tts.infer(
-                ref_file=DEFAULT_REF_AUDIO_PATH,
-                ref_text="",
-                gen_text="Hola",
-                nfe_step=8,  # Use fewer steps for warmup
-                speed=1.0,
-                remove_silence=False,
-            )
-            logger.info("Warmup inference completed successfully")
-        except Exception as warmup_err:
-            logger.warning(f"Warmup inference failed (non-critical): {warmup_err}")
+        # Warmup inference disabled to avoid ASR model download
+        # The first inference request will be slower, but subsequent requests will be fast
+        logger.info("Warmup inference disabled - first request will initialize ASR if needed")
 
         # E2-TTS model loading disabled (model architecture mismatch)
         # Can be enabled when compatible checkpoint is available
