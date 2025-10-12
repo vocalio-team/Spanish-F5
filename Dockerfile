@@ -1,4 +1,9 @@
-# Multi-stage Dockerfile for F5-TTS API with CUDA support - Optimized
+# Multi-stage Dockerfile for F5-TTS API with CUDA support
+# Optimized for fast rebuilds with proper layer caching
+
+# ============================================================================
+# BASE STAGE - System dependencies and Python packages (cached)
+# ============================================================================
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS base
 
 # Set environment variables
@@ -8,6 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV CUDA_VISIBLE_DEVICES=0
 
 # Install system dependencies in a single layer with cleanup
+# This layer rarely changes - good for caching
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3.10-dev \
@@ -33,47 +39,65 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
     ln -sf /usr/bin/python3.10 /usr/bin/python
 
-# Upgrade pip
+# Upgrade pip (cached layer)
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Set working directory
 WORKDIR /app
 
-# Create non-root user for security
+# Create non-root user for security (cached layer)
 RUN groupadd -r f5tts && useradd -r -g f5tts -d /app -s /bin/bash f5tts
 
-# Copy minimal API requirements (no dev/training dependencies)
+# ============================================================================
+# DEPENDENCIES STAGE - Install Python packages (cached unless requirements change)
+# ============================================================================
+
+# Copy ONLY requirements file first - this layer is cached unless requirements change
 COPY requirements-api.txt ./
 
-# Install minimal dependencies for API (no gradio, wandb, matplotlib, etc.)
+# Install Python dependencies (this is the heavy layer that we want to cache)
 RUN pip3 install --no-cache-dir -r requirements-api.txt
 
-# Copy the F5-TTS source code
-COPY src/ ./src/
-COPY f5_tts_api.py ./
-COPY ref_audio/ ./ref_audio/
+# Test PyTorch and CUDA installation (cached with dependencies)
+RUN python3 -c "import torch; print('PyTorch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available())"
+
+# ============================================================================
+# MODELS STAGE - Copy pre-downloaded models (large but rarely change)
+# ============================================================================
 
 # Create necessary directories
 RUN mkdir -p /app/models /app/temp /app/outputs /tmp/f5tts /app/.cache/huggingface/hub
 
-# Set environment variables for HuggingFace cache BEFORE downloading
+# Set environment variables for HuggingFace cache
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_DATASETS_CACHE=/app/.cache/huggingface
 ENV HF_HUB_CACHE=/app/.cache/huggingface/hub
 
-# Copy pre-downloaded vocos model files directly
+# Copy pre-downloaded vocos model files directly (3.15GB - large but static)
+# This layer is cached unless model files change
 COPY vocos_model/ /app/vocos_model/
-
-# Copy pre-downloaded Whisper ASR model files
 COPY whisper_model/ /app/whisper_model/
 
-# Copy entrypoint script for S3 model download
+# Set model paths
+ENV VOCOS_MODEL_PATH=/app/vocos_model
+ENV WHISPER_MODEL_PATH=/app/whisper_model
+
+# ============================================================================
+# APPLICATION STAGE - Copy source code (changes frequently, goes LAST)
+# ============================================================================
+
+# Copy entrypoint script (rarely changes)
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Test PyTorch and CUDA installation
-RUN python3 -c "import torch; print('PyTorch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available())"
+# Copy reference audio files (rarely change)
+COPY ref_audio/ ./ref_audio/
+
+# Copy the F5-TTS source code (LAST - changes most frequently)
+# Any code change only invalidates layers from here onwards
+COPY src/ ./src/
+COPY f5_tts_api.py ./
 
 # Set proper permissions
 RUN chown -R f5tts:f5tts /app /tmp/f5tts
@@ -95,7 +119,9 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # Default command
 CMD ["python3", "-m", "uvicorn", "f5_tts_api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
 
-# Development stage
+# ============================================================================
+# DEVELOPMENT STAGE - Add dev tools
+# ============================================================================
 FROM base AS development
 
 USER root
@@ -122,7 +148,9 @@ USER f5tts
 # Expose additional ports for development
 EXPOSE 8888 8080
 
-# Production stage - Heavily optimized
+# ============================================================================
+# PRODUCTION STAGE - Minimal runtime image (optimized for size)
+# ============================================================================
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS production
 
 # Set environment variables
@@ -156,33 +184,33 @@ WORKDIR /app
 # Create non-root user
 RUN groupadd -r f5tts && useradd -r -g f5tts -d /app -s /bin/bash f5tts
 
-# Copy only the installed packages from base stage
+# Copy only the installed packages from base stage (cached)
 COPY --from=base /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 COPY --from=base /usr/local/bin /usr/local/bin
 
-# Copy application files (NO MODELS - download from S3 at runtime)
-COPY --from=base /app/src ./src/
-COPY --from=base /app/f5_tts_api.py ./
-COPY --from=base /app/ref_audio ./ref_audio/
-
-# Copy pre-downloaded vocos model from base stage
+# Copy pre-downloaded models from base stage (large but static - cached)
 COPY --from=base /app/vocos_model /app/vocos_model
-
-# Copy pre-downloaded Whisper ASR model from base stage
 COPY --from=base /app/whisper_model /app/whisper_model
 
-# Copy entrypoint script
+# Copy entrypoint script (rarely changes - cached)
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Copy reference audio (rarely changes - cached)
+COPY --from=base /app/ref_audio ./ref_audio/
+
+# Copy application code (LAST - most frequently changed)
+COPY --from=base /app/src ./src/
+COPY --from=base /app/f5_tts_api.py ./
 
 # Create necessary directories
 RUN mkdir -p /app/models /app/temp /app/outputs /tmp/f5tts
 
-# Set vocos and whisper model paths
+# Set model paths
 ENV VOCOS_MODEL_PATH=/app/vocos_model
 ENV WHISPER_MODEL_PATH=/app/whisper_model
 
-# Install gunicorn for production (AWS CLI already included from base stage)
+# Install gunicorn for production
 RUN pip3 install --no-cache-dir gunicorn==21.2.0
 
 # Set proper permissions
@@ -195,11 +223,11 @@ USER f5tts
 # Expose port
 EXPOSE 8000
 
-# Health check (longer start period for model download)
+# Health check (longer start period for model loading)
 HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Set entrypoint for S3 model download
+# Set entrypoint
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Production command with gunicorn
