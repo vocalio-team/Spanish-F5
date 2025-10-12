@@ -1,0 +1,10 @@
+{
+  "transcription": "El señor y la señora Dursley, del número 4 de Privet Drive, estaban orgullosos de decir que eran perfectamente normales y muy agradecidos por ello. Eran las últimas personas que uno esperaría encontrar involucradas en algo extraño o misterioso, porque no aceptaban esas tonterías. El señor Dursley era el director de una empresa llamada Grunings, que hacía taladros. Era un hombre corpulento y rollizo, casi sin cuello pero con un bigote muy largo. La señora Dursley era delgada, rubia y alta y tenía un cuello casi del doble de largo de lo habitual, lo que le resultaba muy útil ya que pasaba la mayor parte de su tiempo estirándolo sobre las verjas de los vecinos.",
+  "audio_path": "/mnt/data/src/Spanish-F5/ref_audio/default.wav",
+  "sample_rate": 16000,
+  "duration_seconds": 37.82,
+  "transcription_time_seconds": 13.5,
+  "device": "cpu",
+  "model": "openai/whisper-large-v3-turbo",
+  "generated_at": "2025-10-12 20:54:09"
+}

@@ -1,0 +1,10 @@
+{
+  "transcription": "El señor y la señora Dursley del número cuatro de Privet Drive estaban orgullosos de decir que eran",
+  "audio_path": "/mnt/data/src/Spanish-F5/ref_audio/short.wav",
+  "sample_rate": 16000,
+  "duration_seconds": 6.0,
+  "transcription_time_seconds": 5.65,
+  "device": "cpu",
+  "model": "openai/whisper-large-v3-turbo",
+  "generated_at": "2025-10-12 20:53:41"
+}
