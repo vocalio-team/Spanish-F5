@@ -31,6 +31,7 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
   - Intonation patterns
   - Stress markers
   - Rhythm analysis
+  - Empirically-validated profiles
 
 - **[Audio Quality Guide](../AUDIO_QUALITY_GUIDE.md)** - Audio quality analysis
   - Quality metrics
@@ -45,11 +46,20 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
   - Data flow
   - Extension points
 
-- **[Performance Optimizations](../PERFORMANCE_OPTIMIZATIONS.md)** - Optimization techniques
-  - Torch.compile
-  - cuDNN tuning
-  - Adaptive features
-  - Benchmarks
+- **[API Refactoring](API_REFACTORING.md)** - REST API architecture
+  - Modular design
+  - Separation of concerns
+  - Testing strategy
+
+- **[Audio Compression](AUDIO_COMPRESSION.md)** - Bandwidth optimization
+  - OPUS compression (92% savings)
+  - MP3 compression (83% savings)
+  - Format comparison
+
+- **[Prosody Analysis Papers](PROSODY_ANALYSIS_ACADEMIC_PAPERS.md)** - Research foundation
+  - Rioplatense prosody studies
+  - Empirical measurements
+  - Academic citations
 
 - **[Developer Guide](DEVELOPER_GUIDE.md)** - Development and contribution
   - Development setup
@@ -58,29 +68,25 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
   - Testing guidelines
   - Code quality standards
 
+### Deployment Documentation
+
+- **[Docker Optimization](../DOCKER_OPTIMIZATION.md)** - Docker build optimization ⭐ NEW
+  - Layer caching strategy (94% faster rebuilds)
+  - Build time comparison
+  - Best practices
+  - BuildKit optimizations
+
+- **[Docker Layer Diagram](../DOCKER_LAYER_DIAGRAM.md)** - Visual build guide ⭐ NEW
+  - Before/after comparison
+  - Cache hit rates
+  - Real-world impact metrics
+
 - **[Deployment Guide](DEPLOYMENT_GUIDE.md)** - Production deployment
   - Docker deployment
   - Kubernetes
   - Load balancing
   - Monitoring
   - Security
-
-### API & Integration
-
-- **[Enhanced API Features](API_ENHANCED.md)** - Advanced API features
-  - Enhancement endpoints
-  - Analysis tools
-  - Integration examples
-
-- **[Training Guide](../src/f5_tts/train/README.md)** - Training and finetuning
-  - Dataset preparation
-  - Training configuration
-  - Finetuning process
-
-- **[Inference Guide](../src/f5_tts/infer/README.md)** - Detailed inference instructions
-  - CLI usage
-  - Gradio interface
-  - Advanced parameters
 
 ---
 
@@ -97,12 +103,12 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
 
 1. Follow [Developer Guide](DEVELOPER_GUIDE.md) for setup
 2. Read [Architecture](../ARCHITECTURE.md) to understand design
-3. Check [Testing Guide](DEVELOPER_GUIDE.md#testing) for contribution
+3. Check [Docker Optimization](../DOCKER_OPTIMIZATION.md) for fast iteration
 4. Review [Code Quality](DEVELOPER_GUIDE.md#code-quality) standards
 
 ### For DevOps
 
-1. Start with [Deployment Guide](DEPLOYMENT_GUIDE.md)
+1. Start with [Docker Optimization](../DOCKER_OPTIMIZATION.md) for build efficiency
 2. Configure [Docker setup](DEPLOYMENT_GUIDE.md#docker-deployment)
 3. Setup [Monitoring](DEPLOYMENT_GUIDE.md#monitoring)
 4. Review [Security](DEPLOYMENT_GUIDE.md#security) best practices
@@ -128,7 +134,7 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
 ### Advanced
 
 1. **[Architecture](../ARCHITECTURE.md)** - System design
-2. **[Performance Tuning](../PERFORMANCE_OPTIMIZATIONS.md)** - Optimization
+2. **[Docker Optimization](../DOCKER_OPTIMIZATION.md)** - Fast development workflow
 3. **[Custom Features](DEVELOPER_GUIDE.md#adding-new-features)** - Extend system
 4. **[Production Deployment](DEPLOYMENT_GUIDE.md)** - Scale to production
 
@@ -154,7 +160,7 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
 | Prosody Analysis | [Prosody Guide](../PROSODY_GUIDE.md) | [API Ref](API_REFERENCE.md#prosody-analysis) |
 | Breath & Pauses | [Developer Guide](DEVELOPER_GUIDE.md) | [API Ref](API_REFERENCE.md#breath--pause-analysis) |
 | Audio Quality | [Quality Guide](../AUDIO_QUALITY_GUIDE.md) | [API Ref](API_REFERENCE.md#quality-analysis) |
-| Adaptive NFE | [Performance](../PERFORMANCE_OPTIMIZATIONS.md) | [API Ref](API_REFERENCE.md#adaptive-configuration) |
+| Audio Compression | [Compression Guide](AUDIO_COMPRESSION.md) | [API Ref](API_REFERENCE.md#audio-compression) |
 | Crossfading | [Architecture](../ARCHITECTURE.md) | [API Ref](API_REFERENCE.md#crossfading) |
 
 ---
@@ -173,11 +179,14 @@ TORCH_MATMUL_PRECISION=high    # TF32 precision
 CUDA_VISIBLE_DEVICES=0         # GPU selection
 CUDA_LAUNCH_BLOCKING=0         # Async kernel launch
 
+# Docker BuildKit
+DOCKER_BUILDKIT=1              # Enable BuildKit for better caching
+
 # Logging
 LOG_LEVEL=INFO                 # Logging verbosity
 ```
 
-See: [Performance Guide](../PERFORMANCE_OPTIMIZATIONS.md#environment-variables)
+See: [Docker Optimization](../DOCKER_OPTIMIZATION.md#environment-variables)
 
 ### Model Parameters
 
@@ -235,6 +244,18 @@ curl -X POST "http://localhost:8000/tts" \
 
 See: [API Reference](API_REFERENCE.md#rest-api)
 
+### Docker Build (Optimized)
+
+```bash
+# Fast development build (uses cache)
+./docker-build.sh latest base
+
+# Production build
+./docker-build.sh v1.0.0 production --push
+```
+
+See: [Docker Optimization](../DOCKER_OPTIMIZATION.md)
+
 ---
 
 ## 🧪 Testing & Quality
@@ -259,7 +280,7 @@ See: [Developer Guide](DEVELOPER_GUIDE.md#testing)
 - **Overall**: 60% code coverage
 - **287 tests** across modules
 - **Regional Spanish**: 100% coverage
-- **Breath & Pause**: 99% coverage
+- **Prosody**: 100% coverage (31 tests)
 - **API**: 96% coverage
 
 See: [Test Results](DEVELOPER_GUIDE.md#test-suite)
@@ -272,8 +293,8 @@ See: [Test Results](DEVELOPER_GUIDE.md#test-suite)
 
 - [F5-TTS Paper](https://arxiv.org/abs/2410.06885) - Original F5-TTS
 - [E2-TTS Paper](https://arxiv.org/abs/2406.18009) - E2-TTS architecture
-- [Emilia Dataset](https://arxiv.org/abs/2407.05361) - Training data
-- [WenetSpeech4TTS](https://arxiv.org/abs/2406.05763) - Speech corpus
+- [Cuello & Oro Ozán (2024)](PROSODY_ANALYSIS_ACADEMIC_PAPERS.md) - Rioplatense prosody
+- [Guglielmone et al. (2014)](PROSODY_ANALYSIS_ACADEMIC_PAPERS.md) - Discourse prosody
 
 ### Models & Datasets
 
@@ -285,7 +306,7 @@ See: [Test Results](DEVELOPER_GUIDE.md#test-suite)
 
 - [PyTorch](https://pytorch.org/docs/) - Deep learning framework
 - [FastAPI](https://fastapi.tiangolo.com/) - API framework
-- [Gradio](https://gradio.app/) - Web interfaces
+- [Docker BuildKit](https://docs.docker.com/build/buildkit/) - Advanced Docker builds
 - [torchaudio](https://pytorch.org/audio/) - Audio processing
 
 ---
@@ -323,37 +344,23 @@ See: [Contributing Guide](DEVELOPER_GUIDE.md#contributing)
 
 ### Recent Updates
 
+- **2025-10**: Docker optimization documentation
+  - New Docker optimization guide
+  - Visual layer diagram
+  - Build script documentation
+  - Updated deployment guide
+
+- **2025-10**: Prosody improvements
+  - Empirically-validated prosody profiles
+  - Academic research documentation
+  - Discourse-level prosody
+
 - **2025-01**: Complete documentation overhaul
   - New README with comprehensive examples
   - Complete API reference
   - Developer guide
   - Deployment guide
   - This documentation index
-
-- **2024-12**: Regional Spanish features
-  - Regional Spanish guide
-  - Getting started tutorial
-  - Quick reference
-
-- **2024-11**: Initial documentation
-  - Basic README
-  - Architecture overview
-  - CLAUDE.md guidelines
-
----
-
-## 🎨 Documentation Style Guide
-
-When contributing documentation:
-
-- **Headings**: Use descriptive, action-oriented headings
-- **Code Blocks**: Include language identifiers
-- **Examples**: Provide complete, runnable examples
-- **Links**: Use relative paths for internal links
-- **Emojis**: Use sparingly for visual navigation
-- **Tables**: For structured comparisons
-- **Line Length**: Keep under 100 characters
-- **Tone**: Clear, helpful, professional
 
 ---
 
@@ -363,21 +370,23 @@ When contributing documentation:
 docs/
 ├── README.md                        # This file (index)
 ├── API_REFERENCE.md                 # Complete API documentation
+├── API_REFACTORING.md               # REST API architecture
+├── AUDIO_COMPRESSION.md             # Bandwidth optimization
 ├── DEVELOPER_GUIDE.md               # Development and contribution
 ├── DEPLOYMENT_GUIDE.md              # Production deployment
 ├── SPANISH_REGIONAL_GUIDE.md        # Regional Spanish features
 ├── GETTING_STARTED_REGIONAL.md      # Regional Spanish tutorial
 ├── REGIONAL_QUICK_REFERENCE.md      # Quick patterns reference
-├── API_ENHANCED.md                  # Enhanced API features
-└── ENHANCEMENT_SUMMARY.md           # Feature summary
+└── PROSODY_ANALYSIS_ACADEMIC_PAPERS.md  # Research foundation
 
 ../  (root)
 ├── README.md                        # Main project README
+├── CLAUDE.md                        # Claude Code guidelines
 ├── ARCHITECTURE.md                  # System architecture
-├── PERFORMANCE_OPTIMIZATIONS.md     # Performance guide
 ├── PROSODY_GUIDE.md                 # Prosody features
 ├── AUDIO_QUALITY_GUIDE.md           # Quality analysis
-└── CLAUDE.md                        # Claude Code guidelines
+├── DOCKER_OPTIMIZATION.md           # Docker build optimization ⭐ NEW
+└── DOCKER_LAYER_DIAGRAM.md          # Visual Docker guide ⭐ NEW
 ```
 
 ---
@@ -386,7 +395,7 @@ docs/
 
 **Complete documentation for Spanish-F5 TTS**
 
-[Main README](../README.md) | [API Reference](API_REFERENCE.md) | [Developer Guide](DEVELOPER_GUIDE.md) | [Deployment](DEPLOYMENT_GUIDE.md)
+[Main README](../README.md) | [API Reference](API_REFERENCE.md) | [Developer Guide](DEVELOPER_GUIDE.md) | [Docker Optimization](../DOCKER_OPTIMIZATION.md)
 
 [⬆ Back to Top](#spanish-f5-tts-documentation-)
 
