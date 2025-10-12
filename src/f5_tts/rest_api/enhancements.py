@@ -16,7 +16,12 @@ import logging
 import torch
 import torchaudio
 
-from f5_tts.text import normalize_spanish_text, analyze_spanish_prosody, analyze_breath_pauses
+from f5_tts.text import (
+    normalize_spanish_text,
+    analyze_spanish_prosody,
+    analyze_breath_pauses,
+    analyze_text_unified,
+)
 from f5_tts.audio import AudioQualityAnalyzer, QualityLevel
 from f5_tts.core import get_adaptive_nfe_step, get_adaptive_crossfade_duration
 
@@ -56,23 +61,26 @@ class EnhancementProcessor:
             if quality_metrics:
                 enhancement_metadata["audio_quality"] = quality_metrics
 
-        # 2. Apply text normalization
-        if request.normalize_text:
-            processed_text = self._normalize_text(processed_text)
-            if processed_text != request.gen_text:
+        # 2-4. Unified text analysis (single-pass optimization)
+        # This combines normalization, prosody analysis, and breath analysis in one pass
+        if request.normalize_text or request.analyze_prosody or request.analyze_breath_pauses:
+            text_analysis = self._analyze_text_unified(
+                processed_text,
+                normalize=request.normalize_text,
+                analyze_prosody=request.analyze_prosody,
+                analyze_breath=request.analyze_breath_pauses,
+            )
+
+            # Extract results
+            processed_text = text_analysis.normalized_text
+            if text_analysis.text_was_normalized and processed_text != request.gen_text:
                 enhancement_metadata["normalized_text"] = processed_text
 
-        # 3. Analyze prosody
-        if request.analyze_prosody:
-            prosody_data = self._analyze_prosody(processed_text)
-            if prosody_data:
-                enhancement_metadata["prosody_analysis"] = prosody_data
+            if request.analyze_prosody:
+                enhancement_metadata["prosody_analysis"] = text_analysis.to_dict()["prosody"]
 
-        # 4. Analyze breath and pauses
-        if request.analyze_breath_pauses:
-            breath_data = self._analyze_breath_pauses(processed_text)
-            if breath_data:
-                enhancement_metadata["breath_analysis"] = breath_data
+            if request.analyze_breath_pauses:
+                enhancement_metadata["breath_analysis"] = text_analysis.to_dict()["breath_pattern"]
 
         # 5. Adaptive NFE steps
         if request.adaptive_nfe:
@@ -125,9 +133,51 @@ class EnhancementProcessor:
             logger.warning(f"Audio quality check failed: {e}")
             return None
 
+    def _analyze_text_unified(
+        self, text: str, normalize: bool = True,
+        analyze_prosody: bool = True, analyze_breath: bool = True
+    ):
+        """
+        Unified text analysis (single-pass optimization).
+
+        Args:
+            text: Input text
+            normalize: Whether to normalize text
+            analyze_prosody: Whether to analyze prosody
+            analyze_breath: Whether to analyze breath pauses
+
+        Returns:
+            UnifiedTextAnalysis object
+        """
+        try:
+            analysis = analyze_text_unified(text, normalize, analyze_prosody, analyze_breath)
+            logger.info(
+                f"Unified text analysis: normalized={normalize}, "
+                f"prosody={analyze_prosody}, breath={analyze_breath}"
+            )
+            return analysis
+        except Exception as e:
+            logger.warning(f"Unified text analysis failed: {e}")
+            # Fallback to original text
+            from f5_tts.text.unified_analysis import UnifiedTextAnalysis
+            from f5_tts.text.prosody import ProsodyAnalysis
+            from f5_tts.text.breath_pause import BreathPattern
+            return UnifiedTextAnalysis(
+                normalized_text=text,
+                prosody=ProsodyAnalysis(
+                    original_text=text, marked_text=text, markers=[],
+                    sentence_boundaries=[], breath_points=[], stress_patterns=[]
+                ),
+                breath_pattern=BreathPattern(
+                    text=text, pauses=[], breath_points=[],
+                    avg_pause_interval=0.0, total_duration_estimate=0.0
+                ),
+                text_was_normalized=False,
+            )
+
     def _normalize_text(self, text: str) -> str:
         """
-        Normalize Spanish text.
+        Normalize Spanish text (legacy method, prefer unified analysis).
 
         Args:
             text: Input text

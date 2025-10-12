@@ -42,6 +42,12 @@ from .breath_pause import (
     format_breath_report,
 )
 
+from .unified_analysis import (
+    UnifiedTextAnalysis,
+    UnifiedTextAnalyzer,
+    analyze_text_unified,
+)
+
 __all__ = [
     "BaseTextChunker",
     "SentenceBasedChunker",
@@ -74,4 +80,8 @@ __all__ = [
     "BreathPauseAnalyzer",
     "analyze_breath_pauses",
     "format_breath_report",
+    # Unified analysis (single-pass optimization)
+    "UnifiedTextAnalysis",
+    "UnifiedTextAnalyzer",
+    "analyze_text_unified",
 ]

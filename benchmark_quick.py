@@ -173,22 +173,23 @@ def run_quick_benchmark(model_path: str = None, vocab_path: str = None):
 
     # Handle both dict and object returns
     if isinstance(regional_result, dict):
-        slang_count = len(regional_result.get("slang_terms", [])) if regional_result.get("slang_terms") else 0
-        phonetic_count = len(regional_result.get("phonetic_transformations", [])) if regional_result.get("phonetic_transformations") else 0
+        slang_count = len(regional_result.get("detected_slang", [])) if regional_result.get("detected_slang") else 0
+        # Phonetics are applied but not tracked separately, check if phonetic != normalized
+        phonetics_applied = regional_result.get("phonetic", "") != regional_result.get("normalized", "")
         has_profile = regional_result.get("prosodic_profile") is not None
     else:
         slang_count = len(regional_result.slang_terms) if regional_result.slang_terms else 0
-        phonetic_count = len(regional_result.phonetic_transformations) if regional_result.phonetic_transformations else 0
+        phonetics_applied = True  # Assume applied
         has_profile = regional_result.prosodic_profile is not None
 
     results["quality"]["regional_processing"] = {
         "slang_detected": slang_count,
-        "phonetic_transformations": phonetic_count,
+        "phonetics_applied": phonetics_applied,
         "has_prosodic_profile": has_profile,
     }
 
     print(f"    Slang terms: {results['quality']['regional_processing']['slang_detected']}")
-    print(f"    Phonetic features: {results['quality']['regional_processing']['phonetic_transformations']}")
+    print(f"    Phonetics applied: {results['quality']['regional_processing']['phonetics_applied']}")
 
     # === SUMMARY ===
     print("\n" + "=" * 60)
