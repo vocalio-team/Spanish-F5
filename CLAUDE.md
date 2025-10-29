@@ -74,7 +74,7 @@ python f5_tts_api.py
 # Production mode (with gunicorn)
 gunicorn f5_tts_api:app -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 
-# Docker build (optimized for fast rebuilds - see DOCKER_OPTIMIZATION.md)
+# Docker build (optimized for fast rebuilds - see docs/DOCKER_OPTIMIZATION.md)
 ./docker-build.sh latest base              # Development image
 ./docker-build.sh latest production        # Production image (smaller, optimized)
 ./docker-build.sh latest production --push # Build and push to ECR
@@ -394,13 +394,28 @@ See [docs/SPANISH_REGIONAL_GUIDE.md](docs/SPANISH_REGIONAL_GUIDE.md) for complet
 - **Backend API**: Deployed at https://api.test.aithentia.com:8000/
 - Workers status: https://api.test.aithentia.com:8000/workers
 
+**Vocalio Ecosystem Integration:**
+Spanish-F5 is the TTS GPU worker for the Vocalio distributed AI platform. See Spanish documentation for ecosystem details:
+- **[README.es.md](README.es.md)** - Main documentation in Spanish
+- **[docs/es/ARQUITECTURA_ECOSISTEMA.md](docs/es/ARQUITECTURA_ECOSISTEMA.md)** - Vocalio ecosystem architecture
+- **[docs/es/GUIA_TECNICA.md](docs/es/GUIA_TECNICA.md)** - Detailed technical guide
+
 ## Key Files Reference
 
-- **ARCHITECTURE.md**: Detailed modular architecture documentation
-- **SPANISH_REGIONAL_GUIDE.md**: Complete regional Spanish features guide
-- **API_REFACTORING.md**: REST API refactoring documentation (monolith → modular)
-- **AUDIO_COMPRESSION.md**: Audio compression guide for low-bandwidth deployment
-- **PROSODY_ANALYSIS_ACADEMIC_PAPERS.md**: Academic research findings on Rioplatense prosody **NEW**
+### Documentation in Spanish (Vocalio Ecosystem)
+- **README.es.md**: Main Spanish documentation with ecosystem overview
+- **docs/es/ARQUITECTURA_ECOSISTEMA.md**: Vocalio ecosystem architecture and integration
+- **docs/es/GUIA_TECNICA.md**: Detailed technical guide (components, models, pipelines)
+
+### Technical Documentation (English)
+- **docs/ARCHITECTURE.md**: Detailed modular architecture documentation
+- **docs/SPANISH_REGIONAL_GUIDE.md**: Complete regional Spanish features guide
+- **docs/API_REFACTORING.md**: REST API refactoring documentation (monolith → modular)
+- **docs/AUDIO_COMPRESSION.md**: Audio compression guide for low-bandwidth deployment
+- **docs/PROSODY_ANALYSIS_ACADEMIC_PAPERS.md**: Academic research findings on Rioplatense prosody
+- **docs/AUDIO_QUALITY_GUIDE.md**: Audio quality analysis and metrics
+- **docs/PROSODY_GUIDE.md**: Prosodic features and usage
+- **docs/DOCKER_OPTIMIZATION.md**: Docker build optimization guide
 - **f5_tts_api.py**: REST API server entry point (48 lines, modular)
 - **src/f5_tts/rest_api/**: Modular REST API implementation
   - **app.py**: FastAPI application factory with model loading

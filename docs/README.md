@@ -2,11 +2,19 @@
 
 Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will help you get started, understand the architecture, and master advanced features.
 
+**Part of the Vocalio Ecosystem** - Distributed AI platform for Spanish voice processing.
+
 ---
 
 ## 📖 Documentation Index
 
-### Getting Started
+### 🇪🇸 Documentación en Español (Vocalio Ecosystem)
+
+- **[📖 README en Español](../README.es.md)** - Documentación principal completa
+- **[🏗️ Arquitectura del Ecosistema Vocalio](es/ARQUITECTURA_ECOSISTEMA.md)** - Integración con el ecosistema Vocalio
+- **[🔧 Guía Técnica Detallada](es/GUIA_TECNICA.md)** - Componentes internos, modelos y pipelines
+
+### Getting Started (English)
 
 - **[Main README](../README.md)** - Project overview, installation, and quick start
 - **[Getting Started with Regional Spanish](GETTING_STARTED_REGIONAL.md)** - Tutorial for regional features
@@ -27,20 +35,20 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
   - Prosodic patterns
   - Dataset preparation
 
-- **[Prosody Guide](../PROSODY_GUIDE.md)** - Prosodic modeling features
+- **[Prosody Guide](PROSODY_GUIDE.md)** - Prosodic modeling features
   - Intonation patterns
   - Stress markers
   - Rhythm analysis
   - Empirically-validated profiles
 
-- **[Audio Quality Guide](../AUDIO_QUALITY_GUIDE.md)** - Audio quality analysis
+- **[Audio Quality Guide](AUDIO_QUALITY_GUIDE.md)** - Audio quality analysis
   - Quality metrics
   - Issue detection
   - Improvement strategies
 
 ### Technical Documentation
 
-- **[Architecture](../ARCHITECTURE.md)** - System architecture and design
+- **[Architecture](ARCHITECTURE.md)** - System architecture and design
   - Modular structure
   - Core components
   - Data flow
@@ -70,16 +78,11 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
 
 ### Deployment Documentation
 
-- **[Docker Optimization](../DOCKER_OPTIMIZATION.md)** - Docker build optimization ⭐ NEW
+- **[Docker Optimization](DOCKER_OPTIMIZATION.md)** - Docker build optimization
   - Layer caching strategy (94% faster rebuilds)
   - Build time comparison
   - Best practices
   - BuildKit optimizations
-
-- **[Docker Layer Diagram](../DOCKER_LAYER_DIAGRAM.md)** - Visual build guide ⭐ NEW
-  - Before/after comparison
-  - Cache hit rates
-  - Real-world impact metrics
 
 - **[Deployment Guide](DEPLOYMENT_GUIDE.md)** - Production deployment
   - Docker deployment
@@ -102,13 +105,13 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
 ### For Developers
 
 1. Follow [Developer Guide](DEVELOPER_GUIDE.md) for setup
-2. Read [Architecture](../ARCHITECTURE.md) to understand design
-3. Check [Docker Optimization](../DOCKER_OPTIMIZATION.md) for fast iteration
+2. Read [Architecture](ARCHITECTURE.md) to understand design
+3. Check [Docker Optimization](DOCKER_OPTIMIZATION.md) for fast iteration
 4. Review [Code Quality](DEVELOPER_GUIDE.md#code-quality) standards
 
 ### For DevOps
 
-1. Start with [Docker Optimization](../DOCKER_OPTIMIZATION.md) for build efficiency
+1. Start with [Docker Optimization](DOCKER_OPTIMIZATION.md) for build efficiency
 2. Configure [Docker setup](DEPLOYMENT_GUIDE.md#docker-deployment)
 3. Setup [Monitoring](DEPLOYMENT_GUIDE.md#monitoring)
 4. Review [Security](DEPLOYMENT_GUIDE.md#security) best practices
@@ -133,8 +136,8 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
 
 ### Advanced
 
-1. **[Architecture](../ARCHITECTURE.md)** - System design
-2. **[Docker Optimization](../DOCKER_OPTIMIZATION.md)** - Fast development workflow
+1. **[Architecture](ARCHITECTURE.md)** - System design
+2. **[Docker Optimization](DOCKER_OPTIMIZATION.md)** - Fast development workflow
 3. **[Custom Features](DEVELOPER_GUIDE.md#adding-new-features)** - Extend system
 4. **[Production Deployment](DEPLOYMENT_GUIDE.md)** - Scale to production
 
@@ -157,11 +160,11 @@ Welcome to the comprehensive documentation for Spanish-F5 TTS! This guide will h
 
 | Feature | Documentation | Usage Guide |
 |---------|---------------|-------------|
-| Prosody Analysis | [Prosody Guide](../PROSODY_GUIDE.md) | [API Ref](API_REFERENCE.md#prosody-analysis) |
+| Prosody Analysis | [Prosody Guide](PROSODY_GUIDE.md) | [API Ref](API_REFERENCE.md#prosody-analysis) |
 | Breath & Pauses | [Developer Guide](DEVELOPER_GUIDE.md) | [API Ref](API_REFERENCE.md#breath--pause-analysis) |
-| Audio Quality | [Quality Guide](../AUDIO_QUALITY_GUIDE.md) | [API Ref](API_REFERENCE.md#quality-analysis) |
+| Audio Quality | [Quality Guide](AUDIO_QUALITY_GUIDE.md) | [API Ref](API_REFERENCE.md#quality-analysis) |
 | Audio Compression | [Compression Guide](AUDIO_COMPRESSION.md) | [API Ref](API_REFERENCE.md#audio-compression) |
-| Crossfading | [Architecture](../ARCHITECTURE.md) | [API Ref](API_REFERENCE.md#crossfading) |
+| Crossfading | [Architecture](ARCHITECTURE.md) | [API Ref](API_REFERENCE.md#crossfading) |
 
 ---
 
@@ -186,7 +189,7 @@ DOCKER_BUILDKIT=1              # Enable BuildKit for better caching
 LOG_LEVEL=INFO                 # Logging verbosity
 ```
 
-See: [Docker Optimization](../DOCKER_OPTIMIZATION.md#environment-variables)
+See: [Docker Optimization](DOCKER_OPTIMIZATION.md#environment-variables)
 
 ### Model Parameters
 
@@ -254,7 +257,7 @@ See: [API Reference](API_REFERENCE.md#rest-api)
 ./docker-build.sh v1.0.0 production --push
 ```
 
-See: [Docker Optimization](../DOCKER_OPTIMIZATION.md)
+See: [Docker Optimization](DOCKER_OPTIMIZATION.md)
 
 ---
 
@@ -369,24 +372,39 @@ See: [Contributing Guide](DEVELOPER_GUIDE.md#contributing)
 ```
 docs/
 ├── README.md                        # This file (index)
+├── es/                              # 🇪🇸 Spanish Documentation (NEW)
+│   ├── ARQUITECTURA_ECOSISTEMA.md   # Vocalio ecosystem architecture
+│   └── GUIA_TECNICA.md              # Detailed technical guide
 ├── API_REFERENCE.md                 # Complete API documentation
 ├── API_REFACTORING.md               # REST API architecture
+├── ARCHITECTURE.md                  # System architecture
 ├── AUDIO_COMPRESSION.md             # Bandwidth optimization
-├── DEVELOPER_GUIDE.md               # Development and contribution
+├── AUDIO_QUALITY_GUIDE.md           # Quality analysis
 ├── DEPLOYMENT_GUIDE.md              # Production deployment
-├── SPANISH_REGIONAL_GUIDE.md        # Regional Spanish features
+├── DEVELOPER_GUIDE.md               # Development and contribution
+├── DOCKER_OPTIMIZATION.md           # Docker build optimization
 ├── GETTING_STARTED_REGIONAL.md      # Regional Spanish tutorial
+├── PROSODY_ANALYSIS_ACADEMIC_PAPERS.md  # Research foundation
+├── PROSODY_GUIDE.md                 # Prosody features
 ├── REGIONAL_QUICK_REFERENCE.md      # Quick patterns reference
-└── PROSODY_ANALYSIS_ACADEMIC_PAPERS.md  # Research foundation
+└── SPANISH_REGIONAL_GUIDE.md        # Regional Spanish features
 
 ../  (root)
-├── README.md                        # Main project README
-├── CLAUDE.md                        # Claude Code guidelines
-├── ARCHITECTURE.md                  # System architecture
-├── PROSODY_GUIDE.md                 # Prosody features
-├── AUDIO_QUALITY_GUIDE.md           # Quality analysis
-├── DOCKER_OPTIMIZATION.md           # Docker build optimization ⭐ NEW
-└── DOCKER_LAYER_DIAGRAM.md          # Visual Docker guide ⭐ NEW
+├── README.md                        # Main project README (English)
+├── README.es.md                     # 🇪🇸 Main README (Spanish) (NEW)
+└── CLAUDE.md                        # Claude Code guidelines
+
+archive/
+├── performance/                     # Historical performance tracking
+│   ├── PERFORMANCE_ROADMAP.md
+│   ├── PERFORMANCE_BASELINE.md
+│   ├── PHASE1_BASELINE_SUMMARY.md
+│   ├── PHASE2_OPTIMIZATIONS.md
+│   ├── PHASE2_COMPLETE_SUMMARY.md
+│   ├── COVERAGE_REPORT.md
+│   └── DOCKER_LAYER_DIAGRAM.md
+├── legacy-docs/                     # Archived legacy documentation
+└── session-reports/                 # Historical session reports
 ```
 
 ---
@@ -395,7 +413,7 @@ docs/
 
 **Complete documentation for Spanish-F5 TTS**
 
-[Main README](../README.md) | [API Reference](API_REFERENCE.md) | [Developer Guide](DEVELOPER_GUIDE.md) | [Docker Optimization](../DOCKER_OPTIMIZATION.md)
+[Main README](../README.md) | [API Reference](API_REFERENCE.md) | [Developer Guide](DEVELOPER_GUIDE.md) | [Docker Optimization](DOCKER_OPTIMIZATION.md)
 
 [⬆ Back to Top](#spanish-f5-tts-documentation-)
 

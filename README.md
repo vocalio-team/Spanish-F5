@@ -4,10 +4,16 @@
 
 Spanish-F5 is a high-quality Spanish Text-to-Speech (TTS) system based on F5-TTS, featuring realistic regional accent support for Latin American variants, advanced prosody modeling, and optimized inference performance.
 
+**Part of the Vocalio Ecosystem** - Distributed AI platform for Spanish voice processing.
+
 [![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-60%25-yellow)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+---
+
+📖 **[Documentación en Español](README.es.md)** | [Arquitectura del Ecosistema Vocalio](docs/es/ARQUITECTURA_ECOSISTEMA.md) | [Guía Técnica Detallada](docs/es/GUIA_TECNICA.md)
 
 ---
 
@@ -483,7 +489,7 @@ Spanish-F5/
 
 ### Key Components
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)**: Complete system architecture
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Complete system architecture
 - **[Core Module](src/f5_tts/core/)**: Configuration and type system
 - **[Text Processing](src/f5_tts/text/)**: Regional Spanish, normalization, prosody
 - **[Audio Processing](src/f5_tts/audio/)**: Quality analysis, crossfading
@@ -517,7 +523,7 @@ export TORCH_MATMUL_PRECISION=high
 | Balanced | 16 | RTX 3090 | ~4s |
 | Fast | 8 | RTX 3090 | ~2s |
 
-See **[PERFORMANCE_OPTIMIZATIONS.md](PERFORMANCE_OPTIMIZATIONS.md)** for details.
+See the [Performance section](#-performance) above for optimization details.
 
 ---
 
@@ -562,17 +568,22 @@ ruff format .
 
 ## 📚 Documentation
 
-### User Guides
+### Spanish Documentation (Vocalio Ecosystem)
+- **[📖 README en Español](README.es.md)**: Documentación principal completa
+- **[🏗️ Arquitectura del Ecosistema](docs/es/ARQUITECTURA_ECOSISTEMA.md)**: Integración con Vocalio
+- **[🔧 Guía Técnica](docs/es/GUIA_TECNICA.md)**: Componentes internos y modelos
+
+### User Guides (English)
 - **[Regional Spanish Guide](docs/SPANISH_REGIONAL_GUIDE.md)**: Complete regional features
 - **[Quick Reference](docs/REGIONAL_QUICK_REFERENCE.md)**: Common patterns
 - **[Getting Started](docs/GETTING_STARTED_REGIONAL.md)**: Tutorial
 
-### Technical Documentation
-- **[Architecture](ARCHITECTURE.md)**: System design and modules
-- **[API Documentation](docs/API_ENHANCED.md)**: REST API reference
-- **[Performance Guide](PERFORMANCE_OPTIMIZATIONS.md)**: Optimization tips
-- **[Prosody Guide](PROSODY_GUIDE.md)**: Prosodic features
-- **[Audio Quality Guide](AUDIO_QUALITY_GUIDE.md)**: Quality analysis
+### Technical Documentation (English)
+- **[Architecture](docs/ARCHITECTURE.md)**: System design and modules
+- **[API Documentation](docs/API_REFERENCE.md)**: REST API reference
+- **[Docker Optimization](docs/DOCKER_OPTIMIZATION.md)**: Docker build optimization
+- **[Prosody Guide](docs/PROSODY_GUIDE.md)**: Prosodic features
+- **[Audio Quality Guide](docs/AUDIO_QUALITY_GUIDE.md)**: Quality analysis
 
 ### Development
 - **[CLAUDE.md](CLAUDE.md)**: Development guidelines for Claude Code
